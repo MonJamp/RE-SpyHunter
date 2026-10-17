@@ -12,7 +12,8 @@ presentation and runtime services.
 PSS path and the Escape behavior; no writable movie directory is needed. Video
 uses a file-backed Media Foundation byte stream with MPEG content type, while
 `PssAudioReader` reads private-stream PCM packets through a bounded input buffer.
-The SDL audio queue is refilled incrementally during `update()`. The session
+The target's 512-byte left and right channel blocks are converted to alternating
+stereo samples before being queued to SDL. The SDL audio queue is refilled incrementally during `update()`. The session
 handles timing and aspect-fit rendering. `Log.GameRuntime=debug` enables open,
 queue, completion, and error diagnostics; `trace` adds refill and frame details.
 

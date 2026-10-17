@@ -123,6 +123,7 @@ public:
     SDL_AudioStream* audioStream = nullptr;
     std::vector<std::uint8_t> audioRemainder;
     int maximumQueuedAudioBytes = 0;
+    bool reportedAudioUnderrun = false;
     std::chrono::steady_clock::time_point playbackStart;
     ComPtr<IMFSample> pendingSample;
     LONGLONG pendingTimestamp = 0;
@@ -131,6 +132,14 @@ public:
     {
         int queued = SDL_GetAudioStreamQueued(audioStream);
         if (queued < 0) { error = "Could not query queued audio: " + std::string(SDL_GetError()); return false; }
+        if (queued == 0 && !reportedAudioUnderrun && audioReader.audioBytesRead() > 0 &&
+            audioReader.audioBytesRead() < audioReader.declaredAudioBytes()) {
+            reportedAudioUnderrun = true;
+            logging::write("GameRuntime", logging::Level::warning,
+                           "audio queue drained before the PSS track ended; source_bytes=" +
+                           std::to_string(audioReader.sourceBytesConsumed()) +
+                           " audio_bytes_read=" + std::to_string(audioReader.audioBytesRead()));
+        }
         const int queuedAtStart = queued;
         const auto scanStart = audioReader.sourceBytesConsumed();
         std::vector<std::uint8_t> audio;
@@ -140,19 +149,31 @@ public:
             if (result == AudioReadResult::failed) return false;
             if (result == AudioReadResult::pending) break;
             if (result == AudioReadResult::complete) {
-                if (!audioRemainder.empty()) { error = "PSS audio ends within a PCM sample frame."; return false; }
+                if (!audioRemainder.empty()) { error = "PSS audio ends within a stereo interleave block."; return false; }
                 break;
             }
             audioRemainder.insert(audioRemainder.end(), audio.begin(), audio.end());
-            const auto wholeFrames = audioRemainder.size() & ~std::size_t{3};
-            if (wholeFrames == 0) continue;
-            if (!SDL_PutAudioStreamData(audioStream, audioRemainder.data(), static_cast<int>(wholeFrames))) {
+            const auto channelBlock = static_cast<std::size_t>(audioReader.interleaveBytes());
+            const auto stereoBlock = channelBlock * 2;
+            const auto wholeBlocks = (audioRemainder.size() / stereoBlock) * stereoBlock;
+            if (wholeBlocks == 0) continue;
+            std::vector<std::uint8_t> interleaved(wholeBlocks);
+            for (std::size_t block = 0; block < wholeBlocks; block += stereoBlock) {
+                for (std::size_t sample = 0; sample < channelBlock; sample += 2) {
+                    const auto target = block + sample * 2;
+                    interleaved[target] = audioRemainder[block + sample];
+                    interleaved[target + 1] = audioRemainder[block + sample + 1];
+                    interleaved[target + 2] = audioRemainder[block + channelBlock + sample];
+                    interleaved[target + 3] = audioRemainder[block + channelBlock + sample + 1];
+                }
+            }
+            if (!SDL_PutAudioStreamData(audioStream, interleaved.data(), static_cast<int>(wholeBlocks))) {
                 error = "Could not queue PSS audio: " + std::string(SDL_GetError());
                 return false;
             }
-            queued += static_cast<int>(wholeFrames);
+            queued += static_cast<int>(wholeBlocks);
             maximumQueuedAudioBytes = (std::max)(maximumQueuedAudioBytes, queued);
-            audioRemainder.erase(audioRemainder.begin(), audioRemainder.begin() + static_cast<std::ptrdiff_t>(wholeFrames));
+            audioRemainder.erase(audioRemainder.begin(), audioRemainder.begin() + static_cast<std::ptrdiff_t>(wholeBlocks));
         }
         if (queued > queuedAtStart && logging::enabled("GameRuntime", logging::Level::trace)) {
             logging::write("GameRuntime", logging::Level::trace,
@@ -199,7 +220,7 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
     const SDL_AudioSpec audioSpec{SDL_AUDIO_S16LE, 2, 48000};
     implementation->audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
     if (!implementation->audioStream) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
-    if (!implementation->pumpAudio(32 * 1024, 2 * 1024 * 1024, error)) return fail(error);
+    if (!implementation->pumpAudio(192 * 1024, 8 * 1024 * 1024, error)) return fail(error);
     if (!SDL_ResumeAudioStreamDevice(implementation->audioStream)) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
     implementation->playbackStart = std::chrono::steady_clock::now();
     const auto loadMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(implementation->playbackStart - loadStart).count();
@@ -218,7 +239,7 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
 void CutsceneSession::update()
 {
     if (!implementation_ || finished_ || !error_.empty()) return;
-    if (!implementation_->pumpAudio(192 * 1024, 512 * 1024, error_)) {
+    if (!implementation_->pumpAudio(384 * 1024, 2 * 1024 * 1024, error_)) {
         logging::write("GameRuntime", logging::Level::error, error_);
         return;
     }

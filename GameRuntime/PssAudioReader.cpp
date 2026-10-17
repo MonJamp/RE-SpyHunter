@@ -76,6 +76,26 @@ AudioReadResult PssAudioReader::next(std::vector<std::uint8_t>& audio, std::stri
                    !(packet_[soundDataHeader] == 'S' && packet_[soundDataHeader + 1] == 'S' &&
                      packet_[soundDataHeader + 2] == 'b' && packet_[soundDataHeader + 3] == 'd')) ++soundDataHeader;
             if (soundDataHeader + 8 > packet_.size()) continue;
+            if (soundDataHeader < 32 ||
+                packet_[soundDataHeader - 32] != 'S' || packet_[soundDataHeader - 31] != 'S' ||
+                packet_[soundDataHeader - 30] != 'h' || packet_[soundDataHeader - 29] != 'd') {
+                error = "Sony PCM format header is missing.";
+                return AudioReadResult::failed;
+            }
+            const auto formatHeader = soundDataHeader - 32;
+            const auto read32 = [&](const std::size_t offset) {
+                return static_cast<std::uint32_t>(packet_[offset]) |
+                       (static_cast<std::uint32_t>(packet_[offset + 1]) << 8) |
+                       (static_cast<std::uint32_t>(packet_[offset + 2]) << 16) |
+                       (static_cast<std::uint32_t>(packet_[offset + 3]) << 24);
+            };
+            interleaveBytes_ = read32(formatHeader + 20);
+            if (read32(formatHeader + 8) != 1 || read32(formatHeader + 12) != 48000 ||
+                read32(formatHeader + 16) != 2 || interleaveBytes_ == 0 ||
+                interleaveBytes_ > 64 * 1024 || (interleaveBytes_ & 1) != 0) {
+                error = "Unsupported Sony PCM format or channel interleave.";
+                return AudioReadResult::failed;
+            }
             declaredAudioBytes_ = static_cast<std::uint32_t>(packet_[soundDataHeader + 4]) |
                                   (static_cast<std::uint32_t>(packet_[soundDataHeader + 5]) << 8) |
                                   (static_cast<std::uint32_t>(packet_[soundDataHeader + 6]) << 16) |

@@ -22,6 +22,7 @@ public:
 
     std::uint64_t sourceBytesConsumed() const { return sourceBytesConsumed_; }
     std::uint32_t declaredAudioBytes() const { return declaredAudioBytes_; }
+    std::uint32_t interleaveBytes() const { return interleaveBytes_; }
     std::uint32_t audioBytesRead() const { return audioBytesRead_; }
 
 private:
@@ -35,6 +36,7 @@ private:
     std::vector<std::uint8_t> packet_;
     std::uint32_t marker_ = 0xffffffff;
     std::uint32_t declaredAudioBytes_ = 0;
+    std::uint32_t interleaveBytes_ = 0;
     std::uint32_t audioBytesRead_ = 0;
     std::uint64_t sourceBytesConsumed_ = 0;
 };
