@@ -1,2 +1,11 @@
 # Copy this file to SpyHunter.config and update the path for this machine.
 ExtractedBinariesPath=<absolute path to the extracted game files>
+
+# Logs append to this path. Relative paths are resolved beside this config file.
+# Set any module to off to disable it. Levels: off, error, warning, info, debug, trace.
+LogFilePath=local-assets/SpyHunter.log
+Log.Default=off
+Log.SHViewer=info
+Log.GameRuntime=info
+# Log.GUI=off
+# Log.Configuration=off

@@ -4,6 +4,6 @@
     <Filter Include="Source Files"><UniqueIdentifier>{6e03b3bb-a1b5-4fc7-98a2-6472036f9ac6}</UniqueIdentifier></Filter>
     <Filter Include="Header Files"><UniqueIdentifier>{15645f80-a392-43ce-88f1-dff3f97172bf}</UniqueIdentifier></Filter>
   </ItemGroup>
-  <ItemGroup><ClCompile Include="SpyHunterConfig.cpp"><Filter>Source Files</Filter></ClCompile></ItemGroup>
-  <ItemGroup><ClInclude Include="SpyHunterConfig.h"><Filter>Header Files</Filter></ClInclude></ItemGroup>
+  <ItemGroup><ClCompile Include="SpyHunterConfig.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="SpyHunterLog.cpp"><Filter>Source Files</Filter></ClCompile></ItemGroup>
+  <ItemGroup><ClInclude Include="SpyHunterConfig.h"><Filter>Header Files</Filter></ClInclude><ClInclude Include="SpyHunterLog.h"><Filter>Header Files</Filter></ClInclude></ItemGroup>
 </Project>

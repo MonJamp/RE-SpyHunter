@@ -8,7 +8,7 @@ These small GUI applications help inspect game files and develop the SpyHunter r
 
 The viewer uses the shared configuration and GUI libraries, its validated VKI planar byte-RLE decoder, and the `GameRuntime` non-blocking cutscene playback API. It opens at 2560 × 1440 with a 2× UI scale and stays resizable. The browser has clickable **All**, **VKI**, and **PSS** filters (keyboard shortcuts 1, 2, and 3). Click a file or use Up/Down and Enter to view it; the mouse wheel and Page Up/Down move through longer lists. Escape stops a movie, then exits when playback is inactive.
 
-Pass a `SpyHunter.config` path as the first argument, or let the viewer search upward from its working directory. Movie playback writes the Media Foundation `.mpg` working copy under the configuration directory's ignored `local-assets` folder; input game files remain read-only.
+Pass a `SpyHunter.config` path as the first argument, or let the viewer search upward from its working directory. Movie playback streams directly from the PSS file; input game files remain read-only. Set `Log.SHViewer` and `Log.GameRuntime` independently in the config to inspect navigation and playback in the tab-delimited `LogFilePath` file.
 
 ## Shared project dependencies
 

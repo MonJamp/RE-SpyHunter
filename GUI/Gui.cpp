@@ -1,4 +1,5 @@
 #include "Gui.h"
+#include "../Configuration/SpyHunterLog.h"
 
 #include <algorithm>
 
@@ -6,7 +7,11 @@ namespace spyhunter::gui
 {
 bool configureRenderer(SDL_Renderer* renderer, const float scale)
 {
-    return SDL_SetRenderScale(renderer, scale, scale);
+    const bool configured = SDL_SetRenderScale(renderer, scale, scale);
+    logging::write("GUI", configured ? logging::Level::debug : logging::Level::error,
+                   configured ? "renderer_scale=" + std::to_string(scale) :
+                                "renderer_scale_failed=" + std::string(SDL_GetError()));
+    return configured;
 }
 
 void panel(SDL_Renderer* renderer, const SDL_FRect& rectangle, const SDL_Color color)

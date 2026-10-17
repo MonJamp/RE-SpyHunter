@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SpyHunterLog.h"
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -9,6 +11,7 @@ namespace spyhunter::configuration
 struct Config
 {
     std::filesystem::path extractedBinariesPath;
+    logging::Settings logging;
 };
 
 struct LoadResult

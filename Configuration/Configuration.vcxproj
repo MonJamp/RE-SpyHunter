@@ -35,7 +35,7 @@
       <PreprocessorDefinitions Condition="'$(Configuration)'=='Release'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
-  <ItemGroup><ClInclude Include="SpyHunterConfig.h" /></ItemGroup>
-  <ItemGroup><ClCompile Include="SpyHunterConfig.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="SpyHunterConfig.h" /><ClInclude Include="SpyHunterLog.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="SpyHunterConfig.cpp" /><ClCompile Include="SpyHunterLog.cpp" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

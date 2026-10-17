@@ -3,5 +3,7 @@
   <ItemGroup>
     <ClInclude Include="CutscenePlayer.h" />
     <ClCompile Include="CutscenePlayer.cpp" />
+    <ClInclude Include="PssAudioReader.h" />
+    <ClCompile Include="PssAudioReader.cpp" />
   </ItemGroup>
 </Project>

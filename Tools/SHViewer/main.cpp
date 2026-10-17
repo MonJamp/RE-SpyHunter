@@ -2,6 +2,7 @@
 #include <SDL3/SDL_main.h>
 
 #include "../../Configuration/SpyHunterConfig.h"
+#include "../../Configuration/SpyHunterLog.h"
 #include "../../GameRuntime/CutscenePlayer.h"
 #include "../../GUI/Gui.h"
 
@@ -178,11 +179,20 @@ int main(int argc, char* argv[])
         SDL_Log("Pass the path to SpyHunter.config as the first argument.");
         return 1;
     }
+    std::string loggingError;
+    if (!spyhunter::logging::configure(configResult.config->logging, loggingError)) {
+        SDL_Log("Logging unavailable: %s", loggingError.c_str());
+    }
+    spyhunter::logging::write("Configuration", spyhunter::logging::Level::info,
+                              "loaded path=" + configPath.string());
 
     const auto gameFiles = findGameFiles(configResult.config->extractedBinariesPath);
     SDL_Log("Configuration: %s", configPath.string().c_str());
     SDL_Log("Found %zu files under %s; viewing is currently supported for .VKI and .PSS.", gameFiles.size(),
             configResult.config->extractedBinariesPath.string().c_str());
+    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
+                              "inventory files=" + std::to_string(gameFiles.size()) +
+                              " root=" + configResult.config->extractedBinariesPath.string());
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         SDL_Log("SDL initialization failed: %s", SDL_GetError());
@@ -233,6 +243,7 @@ int main(int argc, char* argv[])
         stillWidth = stillHeight = 0;
         loadedIndex = browserFiles[selectedIndex];
         const GameFile& file = gameFiles[loadedIndex];
+        spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info, "select file=" + file.displayPath);
         if (file.extension == ".vki") {
             std::string error;
             if (const auto decoded = decodeVki(file.path, error)) {
@@ -246,7 +257,7 @@ int main(int argc, char* argv[])
             if (!stillTexture) status = "Could not display VKI: " + error;
         } else if (file.extension == ".pss") {
             std::string error;
-            const spyhunter::runtime::CutsceneOptions options{file.path, configPath.parent_path() / "local-assets", true};
+            const spyhunter::runtime::CutsceneOptions options{file.path, true};
             if (cutscene.load(renderer, options, error)) status = "Playing " + file.displayPath;
             else status = "Could not play PSS: " + error;
         } else {

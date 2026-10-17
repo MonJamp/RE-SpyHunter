@@ -30,6 +30,8 @@ LoadResult load(const std::filesystem::path& configPath)
     }
 
     std::optional<std::filesystem::path> extractedBinariesPath;
+    logging::Settings logSettings;
+    logSettings.filePath = "local-assets/SpyHunter.log";
     std::string line;
     std::size_t lineNumber = 0;
 
@@ -49,6 +51,17 @@ LoadResult load(const std::filesystem::path& configPath)
         const auto value = trim(line.substr(separator + 1));
         if (key == "ExtractedBinariesPath") {
             extractedBinariesPath = std::filesystem::path(value);
+        } else if (key == "LogFilePath") {
+            logSettings.filePath = std::filesystem::path(value);
+        } else if (key.starts_with("Log.")) {
+            logging::Level level;
+            if (!logging::parseLevel(value, level)) {
+                return {{}, "Invalid logging level on configuration line " + std::to_string(lineNumber)};
+            }
+            const auto module = key.substr(4);
+            if (module.empty()) return {{}, "Missing logging module on configuration line " + std::to_string(lineNumber)};
+            if (module == "Default") logSettings.defaultLevel = level;
+            else logSettings.modules[module] = level;
         }
     }
 
@@ -60,13 +73,16 @@ LoadResult load(const std::filesystem::path& configPath)
     if (resolvedPath.is_relative()) {
         resolvedPath = configPath.parent_path() / resolvedPath;
     }
-    resolvedPath = std::filesystem::weakly_canonical(resolvedPath);
+    resolvedPath = std::filesystem::absolute(resolvedPath).lexically_normal();
 
     if (!std::filesystem::is_directory(resolvedPath)) {
         return {{}, "ExtractedBinariesPath is not a directory: " + resolvedPath.string()};
     }
 
-    return {Config{resolvedPath}, {}};
+    if (!logSettings.filePath.empty() && logSettings.filePath.is_relative()) {
+        logSettings.filePath = configPath.parent_path() / logSettings.filePath;
+    }
+    return {Config{resolvedPath, std::move(logSettings)}, {}};
 }
 
 std::filesystem::path findConfigFile(const std::filesystem::path& startDirectory)

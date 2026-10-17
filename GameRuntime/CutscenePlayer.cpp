@@ -1,4 +1,7 @@
 #include "CutscenePlayer.h"
+#include "PssAudioReader.h"
+
+#include "../Configuration/SpyHunterLog.h"
 
 #include <SDL3/SDL.h>
 
@@ -9,8 +12,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <fstream>
-#include <thread>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -54,7 +55,12 @@ public:
         HRESULT result = MFCreateAttributes(&attributes, 2);
         if (SUCCEEDED(result)) result = attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
         if (SUCCEEDED(result)) result = attributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, FALSE);
-        if (SUCCEEDED(result)) result = MFCreateSourceReaderFromURL(path.c_str(), attributes.Get(), &reader_);
+        if (SUCCEEDED(result)) result = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST,
+                                                     MF_FILEFLAGS_NONE, path.c_str(), &byteStream_);
+        ComPtr<IMFAttributes> byteStreamAttributes;
+        if (SUCCEEDED(result)) result = byteStream_.As(&byteStreamAttributes);
+        if (SUCCEEDED(result)) result = byteStreamAttributes->SetString(MF_BYTESTREAM_CONTENT_TYPE, L"video/mpeg");
+        if (SUCCEEDED(result)) result = MFCreateSourceReaderFromByteStream(byteStream_.Get(), attributes.Get(), &reader_);
         if (FAILED(result)) { error = "Media Foundation could not open the movie (" + describeHResult(result) + ")"; return false; }
 
         reader_->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
@@ -84,42 +90,11 @@ public:
     UINT32 width() const { return width_; }
     UINT32 height() const { return height_; }
 private:
+    ComPtr<IMFByteStream> byteStream_;
     ComPtr<IMFSourceReader> reader_;
     UINT32 width_ = 0;
     UINT32 height_ = 0;
 };
-
-bool extractAudioStream(const std::filesystem::path& source, std::vector<unsigned char>& audio, std::string& error)
-{
-    std::ifstream input(source, std::ios::binary);
-    if (!input) { error = "Could not read the PSS movie for audio."; return false; }
-    const std::vector<unsigned char> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    size_t declaredSize = 0;
-    for (size_t offset = 0; offset + 9 < bytes.size();) {
-        if (bytes[offset] != 0 || bytes[offset + 1] != 0 || bytes[offset + 2] != 1 || bytes[offset + 3] != 0xBD) { ++offset; continue; }
-        const size_t packetLength = (static_cast<size_t>(bytes[offset + 4]) << 8) | bytes[offset + 5];
-        const size_t packetEnd = offset + 6 + packetLength;
-        size_t payloadStart = offset + 9 + bytes[offset + 8];
-        if (packetLength == 0 || payloadStart + 4 > packetEnd || packetEnd > bytes.size()) { ++offset; continue; }
-        payloadStart += 4;
-        if (declaredSize == 0) {
-            size_t soundDataHeader = payloadStart;
-            while (soundDataHeader + 8 <= packetEnd && !(bytes[soundDataHeader] == 'S' && bytes[soundDataHeader + 1] == 'S' && bytes[soundDataHeader + 2] == 'b' && bytes[soundDataHeader + 3] == 'd')) ++soundDataHeader;
-            if (soundDataHeader + 8 > packetEnd) { offset = packetEnd; continue; }
-            declaredSize = static_cast<size_t>(bytes[soundDataHeader + 4]) | (static_cast<size_t>(bytes[soundDataHeader + 5]) << 8) | (static_cast<size_t>(bytes[soundDataHeader + 6]) << 16) | (static_cast<size_t>(bytes[soundDataHeader + 7]) << 24);
-            audio.reserve(declaredSize);
-            payloadStart = soundDataHeader + 8;
-        }
-        const size_t remaining = declaredSize - (std::min)(declaredSize, audio.size());
-        const size_t copySize = (std::min)(packetEnd - payloadStart, remaining);
-        audio.insert(audio.end(), bytes.begin() + payloadStart, bytes.begin() + payloadStart + copySize);
-        offset = packetEnd;
-        if (audio.size() == declaredSize) break;
-    }
-    if (declaredSize == 0 || audio.size() != declaredSize) { error = "Sony PCM audio extraction was incomplete."; return false; }
-    SDL_Log("Extracted %zu bytes of 48 kHz stereo PCM audio.", audio.size());
-    return true;
-}
 
 bool updateTexture(SDL_Texture* texture, IMFSample* sample, UINT32 width, UINT32 height, std::string& error)
 {
@@ -143,12 +118,50 @@ class CutsceneSession::Implementation
 public:
     MediaFoundation mediaFoundation;
     MovieReader movie;
+    PssAudioReader audioReader;
     SDL_Texture* texture = nullptr;
     SDL_AudioStream* audioStream = nullptr;
+    std::vector<std::uint8_t> audioRemainder;
+    int maximumQueuedAudioBytes = 0;
     std::chrono::steady_clock::time_point playbackStart;
     ComPtr<IMFSample> pendingSample;
     LONGLONG pendingTimestamp = 0;
     bool hasPendingSample = false;
+    bool pumpAudio(const int targetBytes, const std::uint64_t scanBudget, std::string& error)
+    {
+        int queued = SDL_GetAudioStreamQueued(audioStream);
+        if (queued < 0) { error = "Could not query queued audio: " + std::string(SDL_GetError()); return false; }
+        const int queuedAtStart = queued;
+        const auto scanStart = audioReader.sourceBytesConsumed();
+        std::vector<std::uint8_t> audio;
+        while (queued < targetBytes && audioReader.sourceBytesConsumed() - scanStart < scanBudget) {
+            const auto remainingBudget = scanBudget - (audioReader.sourceBytesConsumed() - scanStart);
+            const auto result = audioReader.next(audio, error, remainingBudget);
+            if (result == AudioReadResult::failed) return false;
+            if (result == AudioReadResult::pending) break;
+            if (result == AudioReadResult::complete) {
+                if (!audioRemainder.empty()) { error = "PSS audio ends within a PCM sample frame."; return false; }
+                break;
+            }
+            audioRemainder.insert(audioRemainder.end(), audio.begin(), audio.end());
+            const auto wholeFrames = audioRemainder.size() & ~std::size_t{3};
+            if (wholeFrames == 0) continue;
+            if (!SDL_PutAudioStreamData(audioStream, audioRemainder.data(), static_cast<int>(wholeFrames))) {
+                error = "Could not queue PSS audio: " + std::string(SDL_GetError());
+                return false;
+            }
+            queued += static_cast<int>(wholeFrames);
+            maximumQueuedAudioBytes = (std::max)(maximumQueuedAudioBytes, queued);
+            audioRemainder.erase(audioRemainder.begin(), audioRemainder.begin() + static_cast<std::ptrdiff_t>(wholeFrames));
+        }
+        if (queued > queuedAtStart && logging::enabled("GameRuntime", logging::Level::trace)) {
+            logging::write("GameRuntime", logging::Level::trace,
+                           "audio_queue added_bytes=" + std::to_string(queued - queuedAtStart) +
+                           " queued_bytes=" + std::to_string(queued) +
+                           " source_bytes=" + std::to_string(audioReader.sourceBytesConsumed()));
+        }
+        return true;
+    }
     ~Implementation()
     {
         if (audioStream) SDL_DestroyAudioStream(audioStream);
@@ -164,26 +177,38 @@ CutsceneSession& CutsceneSession::operator=(CutsceneSession&&) noexcept = defaul
 bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& options, std::string& error)
 {
     stop();
-    if (!renderer) { error_ = error = "Cutscene playback requires an SDL renderer."; return false; }
-    if (!std::filesystem::is_regular_file(options.sourcePath)) { error_ = error = "Cutscene was not found: " + options.sourcePath.string(); return false; }
+    const auto loadStart = std::chrono::steady_clock::now();
+    const auto fail = [&](const std::string& message) {
+        error_ = error = message;
+        logging::write("GameRuntime", logging::Level::error, message);
+        return false;
+    };
+    if (!renderer) return fail("Cutscene playback requires an SDL renderer.");
+    if (!std::filesystem::is_regular_file(options.sourcePath)) return fail("Cutscene was not found: " + options.sourcePath.string());
+    std::error_code sizeError;
+    const auto sourceSize = std::filesystem::file_size(options.sourcePath, sizeError);
+    logging::write("GameRuntime", logging::Level::info,
+                   "open source=" + options.sourcePath.string() + " file_bytes=" +
+                   (sizeError ? "unknown" : std::to_string(sourceSize)));
     auto implementation = std::make_unique<Implementation>();
-    if (FAILED(implementation->mediaFoundation.result())) { error_ = error = "Media Foundation initialization failed (" + describeHResult(implementation->mediaFoundation.result()) + ")"; return false; }
-    std::vector<unsigned char> audioSamples;
-    if (!extractAudioStream(options.sourcePath, audioSamples, error)) { error_ = error; return false; }
-    std::error_code fileError;
-    std::filesystem::create_directories(options.workingDirectory, fileError);
-    if (fileError) { error_ = error = "Could not create the cutscene working directory: " + fileError.message(); return false; }
-    const auto programPath = options.workingDirectory / (options.sourcePath.stem().string() + ".mpg");
-    std::filesystem::copy_file(options.sourcePath, programPath, std::filesystem::copy_options::overwrite_existing, fileError);
-    if (fileError) { error_ = error = "Could not create the MPEG working copy: " + fileError.message(); return false; }
-    if (!implementation->movie.open(programPath, error)) { error_ = error; return false; }
+    if (FAILED(implementation->mediaFoundation.result())) return fail("Media Foundation initialization failed (" + describeHResult(implementation->mediaFoundation.result()) + ")");
+    if (!implementation->movie.open(options.sourcePath, error)) return fail(error);
+    if (!implementation->audioReader.open(options.sourcePath, error)) return fail(error);
     implementation->texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, static_cast<int>(implementation->movie.width()), static_cast<int>(implementation->movie.height()));
-    if (!implementation->texture) { error_ = error = "Texture creation failed: " + std::string(SDL_GetError()); return false; }
+    if (!implementation->texture) return fail("Texture creation failed: " + std::string(SDL_GetError()));
     const SDL_AudioSpec audioSpec{SDL_AUDIO_S16LE, 2, 48000};
     implementation->audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
-    if (!implementation->audioStream || !SDL_PutAudioStreamData(implementation->audioStream, audioSamples.data(), static_cast<int>(audioSamples.size())) || !SDL_ResumeAudioStreamDevice(implementation->audioStream)) { error_ = error = "Audio playback initialization failed: " + std::string(SDL_GetError()); return false; }
+    if (!implementation->audioStream) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
+    if (!implementation->pumpAudio(32 * 1024, 2 * 1024 * 1024, error)) return fail(error);
+    if (!SDL_ResumeAudioStreamDevice(implementation->audioStream)) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
     implementation->playbackStart = std::chrono::steady_clock::now();
-    SDL_Log("Decoded video: %ux%u.", implementation->movie.width(), implementation->movie.height());
+    const auto loadMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(implementation->playbackStart - loadStart).count();
+    logging::write("GameRuntime", logging::Level::info,
+                   "ready elapsed_ms=" + std::to_string(loadMilliseconds) + " video=" +
+                   std::to_string(implementation->movie.width()) + "x" + std::to_string(implementation->movie.height()) +
+                   " audio_source_bytes=" + std::to_string(implementation->audioReader.sourceBytesConsumed()) +
+                   " audio_queued_bytes=" + std::to_string(implementation->maximumQueuedAudioBytes) +
+                   " audio_declared_bytes=" + std::to_string(implementation->audioReader.declaredAudioBytes()));
     implementation_ = std::move(implementation);
     finished_ = false;
     error_.clear();
@@ -193,18 +218,36 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
 void CutsceneSession::update()
 {
     if (!implementation_ || finished_ || !error_.empty()) return;
+    if (!implementation_->pumpAudio(192 * 1024, 512 * 1024, error_)) {
+        logging::write("GameRuntime", logging::Level::error, error_);
+        return;
+    }
     if (!implementation_->hasPendingSample) {
         bool endOfStream = false;
-        if (!implementation_->movie.readFrame(implementation_->pendingSample, implementation_->pendingTimestamp, endOfStream, error_)) return;
-        if (endOfStream) { finished_ = true; return; }
+        if (!implementation_->movie.readFrame(implementation_->pendingSample, implementation_->pendingTimestamp, endOfStream, error_)) {
+            logging::write("GameRuntime", logging::Level::error, error_);
+            return;
+        }
+        if (endOfStream) {
+            finished_ = true;
+            logging::write("GameRuntime", logging::Level::info, "video_end audio_bytes_read=" + std::to_string(implementation_->audioReader.audioBytesRead()));
+            return;
+        }
         if (!implementation_->pendingSample) return;
         implementation_->hasPendingSample = true;
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - implementation_->playbackStart).count() / 100;
     if (implementation_->pendingTimestamp > elapsed) return;
-    if (!updateTexture(implementation_->texture, implementation_->pendingSample.Get(), implementation_->movie.width(), implementation_->movie.height(), error_)) return;
+    if (!updateTexture(implementation_->texture, implementation_->pendingSample.Get(), implementation_->movie.width(), implementation_->movie.height(), error_)) {
+        logging::write("GameRuntime", logging::Level::error, error_);
+        return;
+    }
     implementation_->pendingSample.Reset();
     implementation_->hasPendingSample = false;
+    if (logging::enabled("GameRuntime", logging::Level::trace)) {
+        logging::write("GameRuntime", logging::Level::trace,
+                       "video_frame timestamp_100ns=" + std::to_string(implementation_->pendingTimestamp));
+    }
 }
 
 void CutsceneSession::render(SDL_Renderer* renderer, const SDL_FRect& viewport) const
@@ -215,7 +258,18 @@ void CutsceneSession::render(SDL_Renderer* renderer, const SDL_FRect& viewport) 
     SDL_RenderTexture(renderer, implementation_->texture, nullptr, &destination);
 }
 
-void CutsceneSession::stop() { implementation_.reset(); finished_ = false; error_.clear(); }
+void CutsceneSession::stop()
+{
+    if (implementation_) {
+        logging::write("GameRuntime", logging::Level::debug,
+                       "stop audio_source_bytes=" + std::to_string(implementation_->audioReader.sourceBytesConsumed()) +
+                       " audio_bytes_read=" + std::to_string(implementation_->audioReader.audioBytesRead()) +
+                       " max_audio_queued_bytes=" + std::to_string(implementation_->maximumQueuedAudioBytes));
+    }
+    implementation_.reset();
+    finished_ = false;
+    error_.clear();
+}
 bool CutsceneSession::isPlaying() const { return implementation_ && !finished_ && error_.empty(); }
 bool CutsceneSession::hasFinished() const { return finished_; }
 const std::string& CutsceneSession::error() const { return error_; }

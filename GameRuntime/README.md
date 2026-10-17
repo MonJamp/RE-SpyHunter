@@ -7,11 +7,14 @@ presentation and runtime services.
 
 ## Current API
 
-`CutscenePlayer.h` exposes `playCutscene(renderer, options)`. It accepts an
-existing SDL renderer, a source PSS path, and a writable working directory. It
-returns `completed`, `skipped`, or `failed` with a diagnostic. The implementation
-contains the target-specific PSS demultiplexing, Windows Media Foundation video
-decode, SDL audio playback, timing, aspect-fit rendering, and playback event loop.
+`CutscenePlayer.h` exposes `CutsceneSession` for non-blocking playback and
+`playCutscene(renderer, options)` as a blocking wrapper. Options contain a source
+PSS path and the Escape behavior; no writable movie directory is needed. Video
+uses a file-backed Media Foundation byte stream with MPEG content type, while
+`PssAudioReader` reads private-stream PCM packets through a bounded input buffer.
+The SDL audio queue is refilled incrementally during `update()`. The session
+handles timing and aspect-fit rendering. `Log.GameRuntime=debug` enables open,
+queue, completion, and error diagnostics; `trace` adds refill and frame details.
 
 ## Intended additions
 

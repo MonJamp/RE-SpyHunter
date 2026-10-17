@@ -25,7 +25,6 @@ struct CutscenePlayback
 struct CutsceneOptions
 {
     std::filesystem::path sourcePath;
-    std::filesystem::path workingDirectory;
     bool escapeSkips = true;
 };
 
