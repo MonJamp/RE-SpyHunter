@@ -14,7 +14,7 @@ Copy `SpyHunter.local.props.example` to `SpyHunter.local.props` and set `SDL3Roo
 
 Build the `x64` solution platform. When building from a terminal, use the x64 Visual Studio developer environment or the x64 MSBuild executable. The 32-bit MSBuild host can fail at link time with an incompatible `MSPDB140.DLL` even though compilation succeeds.
 
-`Tools/CutscenePlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It currently plays `MOVIES/M_LOGO.PSS` with MPEG-2 video decoded by Windows Media Foundation and the PSS Sony PCM stream played through SDL3. Escape or closing the window stops playback.
+`Tools/CutscenePlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It scans every subdirectory below `ExtractedBinariesPath` for `.PSS` cutscenes and shows them in a browser beside the video preview. Click a row, or use Up/Down and Enter, to play it. MPEG-2 video is decoded by Windows Media Foundation and the PSS Sony PCM stream is played through SDL3. Escape stops the current cutscene; press Escape again or close the window to exit.
 
 The player creates an ignored `local-assets/M_LOGO.mpg` working copy because Windows' MPEG source resolver requires a recognized container suffix. The source PSS and everything under the extracted/original trees remain unchanged.
 
