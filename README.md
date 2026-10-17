@@ -14,4 +14,6 @@ Copy `SpyHunter.local.props.example` to `SpyHunter.local.props` and set `SDL3Roo
 
 Build the `x64` solution platform. When building from a terminal, use the x64 Visual Studio developer environment or the x64 MSBuild executable. The 32-bit MSBuild host can fail at link time with an incompatible `MSPDB140.DLL` even though compilation succeeds.
 
-`StartupPlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It currently resolves and validates `MOVIES/M_LOGO.PSS`, the first logo movie selected for playback integration; actual PSS decoding is not implemented yet.
+`StartupPlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It plays `MOVIES/M_LOGO.PSS` with MPEG-2 video decoded by Windows Media Foundation and the PSS Sony PCM stream played through SDL3. Escape or closing the window stops playback.
+
+The player creates an ignored `local-assets/M_LOGO.mpg` working copy because Windows' MPEG source resolver requires a recognized container suffix. The source PSS and everything under the extracted/original trees remain unchanged.
