@@ -10,7 +10,7 @@ The executable reads `SpyHunter.config` to find extracted assets. Pass the confi
 
 ## StillViewer
 
-`StillViewer` is the companion asset browser for static images. It uses the same configuration, 2560 × 1440 default window, 2× UI scale, and right-side browser layout as CutscenePlayer. It recursively inventories standalone `.VKI` containers and ordinary image files beneath the extracted-binaries root. The initial release records the native `vkImage` dimensions and selection state; rendering the encoded `.VKI` pixels and extracting packed `INTRO.PCK` assets are deliberately isolated behind the still-image decoder boundary so the legal screen can join the browser without changing its UI.
+`StillViewer` is the companion asset browser for static images. It uses the same configuration, 2560 × 1440 default window, 2× UI scale, and right-side browser layout as CutscenePlayer. It recursively inventories standalone `.VKI` containers and ordinary image files beneath the extracted-binaries root. Standalone SpyHunter `.VKI` files are decoded directly from their planar byte-RLE representation, converted from bottom-up storage to top-down display orientation, and aspect-fitted in the preview pane. Ordinary image files are inventoried but their pixel decoding and packed `INTRO.PCK` extraction remain pending behind the same viewer boundary.
 
 ## Shared project dependencies
 

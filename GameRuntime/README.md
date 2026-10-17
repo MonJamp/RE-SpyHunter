@@ -15,7 +15,7 @@ decode, SDL audio playback, timing, aspect-fit rendering, and playback event loo
 
 ## Intended additions
 
-- `StillImagePlayer`: load and present decoded VKI/menu stills.
+- `StillImagePlayer`: move the now-validated VKI decoder/presentation path from `Tools/StillViewer` into this shared library when the main runtime needs it.
 - A non-blocking cutscene session API for integration into the main game loop.
 - Startup/frontend state coordination built from named states and transition
   results. Menu transitions should depend on state IDs and actions, not on media
