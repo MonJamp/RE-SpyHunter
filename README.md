@@ -4,7 +4,7 @@ RE::SpyHunter is a native reconstruction of the PlayStation 2 game SpyHunter (20
 
 ## Solution layout
 
-- [`RE-SpyHunter`](RE-SpyHunter/RE-SpyHunter.vcxproj) is the main game executable. It currently opens an SDL3 window and runs an exitable event/render loop; gameplay and asset loading are still to come.
+- [`RE-SpyHunter`](RE-SpyHunter/RE-SpyHunter.vcxproj) is the main game executable. Its first intro slice follows the recovered boot order through the Press Start image and the `MLOAD.VKI` pre-menu loading screen. Press X during a movie to skip it while iterating; Press Start with Enter, Space, S, or a mouse click.
 - [`GameRuntime`](GameRuntime/README.md) holds reusable playback and runtime services. It plays PSS cutscenes and indexes PCK archives for bounded member reads.
 - [`Configuration`](Configuration/Configuration.vcxproj) loads local paths and logging settings shared by the executables.
 - [`GUI`](GUI/README.md) provides shared SDL3 presentation helpers.

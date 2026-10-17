@@ -30,6 +30,7 @@ LoadResult load(const std::filesystem::path& configPath)
     }
 
     std::optional<std::filesystem::path> extractedBinariesPath;
+    bool autosaveEnabled = true;
     logging::Settings logSettings;
     logSettings.filePath = "local-assets/SpyHunter.log";
     std::string line;
@@ -51,6 +52,10 @@ LoadResult load(const std::filesystem::path& configPath)
         const auto value = trim(line.substr(separator + 1));
         if (key == "ExtractedBinariesPath") {
             extractedBinariesPath = std::filesystem::path(value);
+        } else if (key == "AutosaveEnabled") {
+            if (value == "true" || value == "1" || value == "on") autosaveEnabled = true;
+            else if (value == "false" || value == "0" || value == "off") autosaveEnabled = false;
+            else return {{}, "Invalid AutosaveEnabled value on configuration line " + std::to_string(lineNumber)};
         } else if (key == "LogFilePath") {
             logSettings.filePath = std::filesystem::path(value);
         } else if (key.starts_with("Log.")) {
@@ -82,7 +87,7 @@ LoadResult load(const std::filesystem::path& configPath)
     if (!logSettings.filePath.empty() && logSettings.filePath.is_relative()) {
         logSettings.filePath = configPath.parent_path() / logSettings.filePath;
     }
-    return {Config{resolvedPath, std::move(logSettings)}, {}};
+    return {Config{resolvedPath, autosaveEnabled, std::move(logSettings)}, {}};
 }
 
 std::filesystem::path findConfigFile(const std::filesystem::path& startDirectory)

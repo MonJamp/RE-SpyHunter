@@ -11,6 +11,7 @@ namespace spyhunter::configuration
 struct Config
 {
     std::filesystem::path extractedBinariesPath;
+    bool autosaveEnabled = true;
     logging::Settings logging;
 };
 

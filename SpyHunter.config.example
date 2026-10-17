@@ -1,5 +1,6 @@
 # Copy this file to SpyHunter.config and update the path for this machine.
 ExtractedBinariesPath=<absolute path to the extracted game files>
+AutosaveEnabled=true
 
 # Logs append to this path. Relative paths are resolved beside this config file.
 # Set any module to off to disable it. Levels: off, error, warning, info, debug, trace.

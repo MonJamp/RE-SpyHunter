@@ -44,6 +44,7 @@ public:
     bool load(SDL_Renderer* renderer, const CutsceneOptions& options, std::string& error);
     void update();
     void render(SDL_Renderer* renderer, const SDL_FRect& viewport) const;
+    void requestSkip();
     void stop();
 
     bool isPlaying() const;

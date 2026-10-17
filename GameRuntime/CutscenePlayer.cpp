@@ -291,6 +291,14 @@ void CutsceneSession::stop()
     finished_ = false;
     error_.clear();
 }
+
+void CutsceneSession::requestSkip()
+{
+    implementation_.reset();
+    error_.clear();
+    finished_ = true;
+}
+
 bool CutsceneSession::isPlaying() const { return implementation_ && !finished_ && error_.empty(); }
 bool CutsceneSession::hasFinished() const { return finished_; }
 const std::string& CutsceneSession::error() const { return error_; }

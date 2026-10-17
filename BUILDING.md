@@ -4,7 +4,7 @@ Open `SpyHunter.slnx` in Visual Studio and build the `x64` solution platform. To
 
 Copy `SpyHunter.local.props.example` to `SpyHunter.local.props` and set `SDL3Root` to the local SDL3 distribution directory. The local properties file is ignored by Git; the project derives include, library, and DLL paths from it.
 
-Copy `SpyHunter.config.example` to `SpyHunter.config` and set `ExtractedBinariesPath` to the extracted game files. The local config is ignored by Git. Relative values are resolved from the configuration file's directory. The main game starter does not yet load this config; SH Viewer does.
+Copy `SpyHunter.config.example` to `SpyHunter.config` and set `ExtractedBinariesPath` to the extracted game files. The local config is ignored by Git. Relative values are resolved from the configuration file's directory. `AutosaveEnabled=true|false` selects the native intro notice; the default is `true`. The main game and SH Viewer load this config.
 
 When building from a terminal, use the x64 Visual Studio developer environment or x64 MSBuild. The 32-bit MSBuild host has failed at link time with an incompatible `MSPDB140.DLL` in this environment.
 
