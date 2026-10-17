@@ -21,6 +21,7 @@ public:
     bool open(const std::filesystem::path& path, std::string& error);
     bool read(size_t index, std::vector<std::uint8_t>& bytes, std::string& error) const;
     const std::vector<AudioMpkEntry>& entries() const { return entries_; }
+    const std::filesystem::path& path() const { return path_; }
 
 private:
     std::filesystem::path path_;

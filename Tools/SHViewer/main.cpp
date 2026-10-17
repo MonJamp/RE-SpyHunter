@@ -204,10 +204,9 @@ int main(int argc, char* argv[])
                 const auto& entry = audioArchive.entries()[*row.memberIndex];
                 spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
                     "select audio=" + file.displayPath + "/" + entry.name);
-                std::vector<std::uint8_t> bytes;
                 std::string error, details;
-                if (!audioArchive.read(*row.memberIndex, bytes, error) ||
-                    !audioPlayer.play(bytes, details, error)) status = "Could not play " + entry.name + ": " + error;
+                if (!audioPlayer.play(audioArchive, *row.memberIndex, details, error))
+                    status = "Could not play " + entry.name + ": " + error;
                 else status = "Playing " + entry.name + " (" + details + ")";
                 return;
             }
@@ -350,6 +349,8 @@ int main(int argc, char* argv[])
             firstVisibleIndex = (std::min)(firstVisibleIndex, browserRows.size() > visibleRows ? browserRows.size() - visibleRows : size_t{0});
         }
         cutscene.update();
+        audioPlayer.update();
+        if (!audioPlayer.error().empty()) status = "Audio playback failed: " + audioPlayer.error();
         if (!cutscene.error().empty()) status = "Playback failed: " + cutscene.error();
         if (cutscene.hasFinished()) status = "Playback finished. Select another file.";
 
