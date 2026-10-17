@@ -21,7 +21,8 @@ namespace
 constexpr int kLogicalWidth = 640;
 constexpr int kLogicalHeight = 448;
 
-enum class IntroState { loading, autosaveNotice, legal, movies, pressStart, preMenuLoading };
+enum class IntroState { loading, autosaveNotice, autosaveFade, legal, movies,
+                        pressStart, startFade, attractMovie, preMenuLoading };
 
 SDL_Texture* createTexture(SDL_Renderer* renderer, const spyhunter::runtime::DecodedStill& still)
 {
@@ -158,6 +159,7 @@ int main(int argc, char** argv)
         root / "MOVIES" / "PEILOGO.PSS",
         root / "MOVIES" / "INTRO.PSS"
     };
+    const auto attractMovie = root / "MOVIES" / "SPY_DEMO.PSS";
     spyhunter::runtime::FrontendSound frontendSound;
     if (!frontendSound.loadAccept(root / "DATA" / "AUDIO.MPK", error)) {
         SDL_Log("Frontend accept sound unavailable: %s", error.c_str());
@@ -166,6 +168,7 @@ int main(int argc, char** argv)
     std::size_t movieIndex = 0;
     IntroState state = IntroState::loading;
     double stateSeconds = 0.0;
+    double fadeDuration = 0.5;
     auto previous = SDL_GetTicksNS();
     bool running = true;
 
@@ -178,40 +181,50 @@ int main(int argc, char** argv)
                 if (state == IntroState::pressStart &&
                     (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE || event.key.key == SDLK_S)) {
                     frontendSound.playAccept();
-                    state = IntroState::preMenuLoading;
+                    state = IntroState::startFade;
                     stateSeconds = 0.0;
-                    SDL_Log("Start pressed: showing MLOAD.VKI before ShMSetupState/profile menu 7.");
+                    fadeDuration = 0.5;
+                    SDL_Log("Start pressed: fading toward MLOAD.VKI.");
                 }
-                if (state == IntroState::movies && event.key.key == SDLK_X) {
+                if ((state == IntroState::movies && event.key.key == SDLK_X) ||
+                    (state == IntroState::attractMovie &&
+                     (event.key.key == SDLK_X || event.key.key == SDLK_RETURN))) {
                     movie.requestSkip();
                 }
                 if (state == IntroState::autosaveNotice &&
                     (event.key.key == SDLK_X || event.key.key == SDLK_RETURN)) {
                     frontendSound.playAccept();
-                    stateSeconds = (std::max)(stateSeconds, 6.25);
+                    state = IntroState::autosaveFade;
+                    stateSeconds = 0.0;
+                    fadeDuration = 0.25;
                 }
             }
             if (state == IntroState::pressStart && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 event.button.button == SDL_BUTTON_LEFT) {
                 frontendSound.playAccept();
-                state = IntroState::preMenuLoading;
+                state = IntroState::startFade;
                 stateSeconds = 0.0;
-                SDL_Log("Start clicked: showing MLOAD.VKI before ShMSetupState/profile menu 7.");
+                fadeDuration = 0.5;
+                SDL_Log("Start clicked: fading toward MLOAD.VKI.");
             }
         }
 
         const auto now = SDL_GetTicksNS();
         const double delta = static_cast<double>(now - previous) / 1'000'000'000.0;
         previous = now;
-        stateSeconds += std::min(delta, 0.05);
+        // The original uses wall time for still screens, but clamps idle and fade updates to 0.05 s.
+        stateSeconds += (state == IntroState::pressStart || state == IntroState::startFade ||
+                         state == IntroState::autosaveFade) ? (std::min)(delta, 0.05) : delta;
 
         if (state == IntroState::loading && stateSeconds >= 0.5) {
             state = IntroState::autosaveNotice; stateSeconds = 0.0;
         } else if (state == IntroState::autosaveNotice && stateSeconds >= 6.5) {
+            state = IntroState::autosaveFade; stateSeconds = 0.0; fadeDuration = 0.5;
+        } else if (state == IntroState::autosaveFade && stateSeconds >= fadeDuration) {
             state = IntroState::legal; stateSeconds = 0.0;
         } else if (state == IntroState::legal && stateSeconds >= 4.0) {
             movieIndex = 0;
-            if (!movie.load(renderer, {movies[movieIndex], true}, error)) {
+            if (!movie.load(renderer, {movies[movieIndex], true, true}, error)) {
                 SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "RE::SpyHunter movie", error.c_str(), window);
                 running = false;
             } else { state = IntroState::movies; stateSeconds = 0.0; }
@@ -222,18 +235,31 @@ int main(int argc, char** argv)
                 ++movieIndex;
                 if (movieIndex == movies.size()) {
                     state = IntroState::pressStart; stateSeconds = 0.0;
-                } else if (!movie.load(renderer, {movies[movieIndex], true}, error)) {
+                } else if (!movie.load(renderer, {movies[movieIndex], true, true}, error)) {
                     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "RE::SpyHunter movie", error.c_str(), window);
                     running = false;
                 }
             }
+        } else if (state == IntroState::pressStart && stateSeconds > 30.0) {
+            if (!movie.load(renderer, {attractMovie, true, true}, error)) {
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "RE::SpyHunter attract movie", error.c_str(), window);
+                running = false;
+            } else { state = IntroState::attractMovie; stateSeconds = 0.0; }
+        } else if (state == IntroState::attractMovie) {
+            movie.update();
+            if (movie.hasFinished()) {
+                movie.stop();
+                state = IntroState::pressStart; stateSeconds = 0.0;
+            }
+        } else if (state == IntroState::startFade && stateSeconds >= fadeDuration) {
+            state = IntroState::preMenuLoading; stateSeconds = 0.0;
         }
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         if (state == IntroState::loading) {
             drawLoading(renderer, consoleFont);
-        } else if (state == IntroState::autosaveNotice) {
+        } else if (state == IntroState::autosaveNotice || state == IntroState::autosaveFade) {
             if (configResult.config->autosaveEnabled) {
                 introFont.drawText(renderer, "A U T O S A V E   I S   E N A B L E D", 100.0f, 200.0f,
                                    static_cast<float>(kLogicalHeight), 0.8f);
@@ -243,16 +269,24 @@ int main(int argc, char** argv)
             }
         } else if (state == IntroState::legal) {
             drawCentered(renderer, legalTexture);
-        } else if (state == IntroState::movies) {
+        } else if (state == IntroState::movies || state == IntroState::attractMovie) {
             const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(kLogicalWidth), static_cast<float>(kLogicalHeight)};
             movie.render(renderer, viewport);
-        } else if (state == IntroState::pressStart) {
+        } else if (state == IntroState::pressStart || state == IntroState::startFade) {
             drawCentered(renderer, logoTexture);
             introFont.drawText(renderer, "P R E S S  S T A R T  B U T T O N", 130.0f, 65.0f,
                                static_cast<float>(kLogicalHeight), 0.8f);
         } else if (state == IntroState::preMenuLoading) {
             if (loadingTexture) drawCentered(renderer, loadingTexture);
             else drawLoading(renderer, consoleFont);
+        }
+        if (state == IntroState::autosaveFade || state == IntroState::startFade) {
+            // ShGraph's (0,1), (0.5,0.5), (1,0) points evaluate 2 * remaining time.
+            const auto opacity = static_cast<Uint8>(255.0 * (std::clamp)(
+                1.0 - 2.0 * (fadeDuration - stateSeconds), 0.0, 1.0));
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, opacity);
+            SDL_RenderFillRect(renderer, nullptr);
         }
         SDL_RenderPresent(renderer);
         SDL_Delay(8);

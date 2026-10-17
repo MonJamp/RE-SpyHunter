@@ -128,6 +128,8 @@ public:
     ComPtr<IMFSample> pendingSample;
     LONGLONG pendingTimestamp = 0;
     bool hasPendingSample = false;
+    bool videoFinished = false;
+    bool cropToPs2Display = false;
     bool pumpAudio(const int targetBytes, const std::uint64_t scanBudget, std::string& error)
     {
         int queued = SDL_GetAudioStreamQueued(audioStream);
@@ -212,6 +214,7 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
                    "open source=" + options.sourcePath.string() + " file_bytes=" +
                    (sizeError ? "unknown" : std::to_string(sourceSize)));
     auto implementation = std::make_unique<Implementation>();
+    implementation->cropToPs2Display = options.cropToPs2Display;
     if (FAILED(implementation->mediaFoundation.result())) return fail("Media Foundation initialization failed (" + describeHResult(implementation->mediaFoundation.result()) + ")");
     if (!implementation->movie.open(options.sourcePath, error)) return fail(error);
     if (!implementation->audioReader.open(options.sourcePath, error)) return fail(error);
@@ -220,6 +223,10 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
     const SDL_AudioSpec audioSpec{SDL_AUDIO_S16LE, 2, 48000};
     implementation->audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
     if (!implementation->audioStream) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
+    // Retail ShAudio starts both movie volume inputs at 1.0; PlayMpeg selects max(music*0.8, effects).
+    // No movie-stream pitch change is present in that call path.
+    if (!SDL_SetAudioStreamGain(implementation->audioStream, 1.0f))
+        return fail("Could not set movie audio gain: " + std::string(SDL_GetError()));
     if (!implementation->pumpAudio(192 * 1024, 8 * 1024 * 1024, error)) return fail(error);
     if (!SDL_ResumeAudioStreamDevice(implementation->audioStream)) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
     implementation->playbackStart = std::chrono::steady_clock::now();
@@ -243,6 +250,20 @@ void CutsceneSession::update()
         logging::write("GameRuntime", logging::Level::error, error_);
         return;
     }
+    if (implementation_->videoFinished) {
+        const int queued = SDL_GetAudioStreamQueued(implementation_->audioStream);
+        if (queued < 0) {
+            error_ = "Could not query remaining movie audio: " + std::string(SDL_GetError());
+            return;
+        }
+        if (implementation_->audioReader.declaredAudioBytes() != 0 &&
+            implementation_->audioReader.audioBytesRead() == implementation_->audioReader.declaredAudioBytes() &&
+            queued == 0) {
+            finished_ = true;
+            logging::write("GameRuntime", logging::Level::info, "movie_end video_and_audio_complete");
+        }
+        return;
+    }
     if (!implementation_->hasPendingSample) {
         bool endOfStream = false;
         if (!implementation_->movie.readFrame(implementation_->pendingSample, implementation_->pendingTimestamp, endOfStream, error_)) {
@@ -250,8 +271,10 @@ void CutsceneSession::update()
             return;
         }
         if (endOfStream) {
-            finished_ = true;
-            logging::write("GameRuntime", logging::Level::info, "video_end audio_bytes_read=" + std::to_string(implementation_->audioReader.audioBytesRead()));
+            implementation_->videoFinished = true;
+            logging::write("GameRuntime", logging::Level::info, "video_end awaiting_audio_bytes=" +
+                           std::to_string(implementation_->audioReader.declaredAudioBytes() -
+                                          implementation_->audioReader.audioBytesRead()));
             return;
         }
         if (!implementation_->pendingSample) return;
@@ -274,9 +297,15 @@ void CutsceneSession::update()
 void CutsceneSession::render(SDL_Renderer* renderer, const SDL_FRect& viewport) const
 {
     if (!implementation_ || !implementation_->texture || viewport.w <= 0 || viewport.h <= 0) return;
-    const float scale = (std::min)(viewport.w / static_cast<float>(implementation_->movie.width()), viewport.h / static_cast<float>(implementation_->movie.height()));
-    const SDL_FRect destination{viewport.x + (viewport.w - implementation_->movie.width() * scale) * 0.5f, viewport.y + (viewport.h - implementation_->movie.height() * scale) * 0.5f, implementation_->movie.width() * scale, implementation_->movie.height() * scale};
-    SDL_RenderTexture(renderer, implementation_->texture, nullptr, &destination);
+    const bool crop = implementation_->cropToPs2Display && implementation_->movie.width() == 640 &&
+                      implementation_->movie.height() == 480;
+    const SDL_FRect source{0.0f, crop ? 16.0f : 0.0f, static_cast<float>(implementation_->movie.width()),
+                           crop ? 448.0f : static_cast<float>(implementation_->movie.height())};
+    const float scale = (std::min)(viewport.w / source.w, viewport.h / source.h);
+    const SDL_FRect destination{viewport.x + (viewport.w - source.w * scale) * 0.5f,
+                                viewport.y + (viewport.h - source.h * scale) * 0.5f,
+                                source.w * scale, source.h * scale};
+    SDL_RenderTexture(renderer, implementation_->texture, &source, &destination);
 }
 
 void CutsceneSession::stop()

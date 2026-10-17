@@ -26,6 +26,7 @@ struct CutsceneOptions
 {
     std::filesystem::path sourcePath;
     bool escapeSkips = true;
+    bool cropToPs2Display = false;
 };
 
 // Incremental PSS playback for applications that own their own event loop and
