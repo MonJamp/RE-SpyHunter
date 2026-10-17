@@ -1,0 +1,199 @@
+#include "VkfTextureFont.h"
+
+#include "PckArchive.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <limits>
+
+namespace spyhunter::runtime
+{
+namespace
+{
+constexpr std::size_t kAtlasWidth = 256;
+constexpr std::size_t kAtlasHeight = 256;
+constexpr std::size_t kPaletteEntries = 256;
+constexpr std::size_t kGlyphCount = 99;
+constexpr std::size_t kGlyphRecordSize = 42;
+constexpr std::uint16_t kControlCodes[]{8, 9, 10, 13};
+
+std::uint16_t read16(const std::vector<std::uint8_t>& bytes, std::size_t offset)
+{
+    return std::uint16_t(bytes[offset]) | std::uint16_t(bytes[offset + 1] << 8);
+}
+
+float readFloat(const std::vector<std::uint8_t>& bytes, std::size_t offset)
+{
+    float result = 0;
+    std::memcpy(&result, bytes.data() + offset, sizeof(result));
+    return result;
+}
+
+bool endsWithIgnoreCase(std::string_view text, std::string_view suffix)
+{
+    if (suffix.size() > text.size()) return false;
+    text.remove_prefix(text.size() - suffix.size());
+    return std::equal(text.begin(), text.end(), suffix.begin(), suffix.end(),
+        [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
+}
+}
+
+VkfTextureFont::~VkfTextureFont()
+{
+    unload();
+}
+
+void VkfTextureFont::unload()
+{
+    if (texture_) SDL_DestroyTexture(texture_);
+    texture_ = nullptr;
+    glyphs_ = {};
+}
+
+bool VkfTextureFont::loadFromPackedArchive(const std::filesystem::path& archivePath,
+                                           std::string_view memberName, SDL_Renderer* renderer,
+                                           std::string& error)
+{
+    PckArchive archive;
+    if (!archive.open(archivePath, error)) return false;
+    const auto& entries = archive.entries();
+    const auto found = std::find_if(entries.begin(), entries.end(), [&](const PckEntry& entry) {
+        return entry.type == "vkTextureFont" && endsWithIgnoreCase(entry.name, memberName);
+    });
+    if (found == entries.end()) { error = "VKF font was not found in " + archivePath.string(); return false; }
+    if (found->size > (std::numeric_limits<std::size_t>::max)()) {
+        error = "VKF font entry is too large."; return false;
+    }
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(found->size));
+    if (archive.readEntry(static_cast<std::size_t>(found - entries.begin()), 0, bytes.data(), bytes.size(), error) != bytes.size())
+        return false;
+    return loadFromBytes(bytes, renderer, error);
+}
+
+bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_Renderer* renderer, std::string& error)
+{
+    error.clear();
+    if (!renderer) { error = "VKF font needs an SDL renderer."; return false; }
+
+    // This retail vkTextureFont embeds one PSMT8 vkDMATexture with a 256-entry RGBA CLUT.
+    // The offsets follow the observed 3.0.87 serialized texture header in INTRO.PCK.
+    constexpr char textureType[] = "vkDMATexture";
+    const auto marker = std::search(bytes.begin(), bytes.end(), std::begin(textureType), std::end(textureType));
+    if (marker == bytes.end()) { error = "VKF has no embedded vkDMATexture."; return false; }
+    const std::size_t version = static_cast<std::size_t>(marker - bytes.begin()) + sizeof(textureType);
+    const std::size_t palette = version + 0x32;
+    const std::size_t mipCount = palette + kPaletteEntries * 4;
+    const std::size_t pixels = mipCount + 1;
+    const std::size_t pixelCount = kAtlasWidth * kAtlasHeight;
+    if (pixels + pixelCount > bytes.size() || read16(bytes, version + 0x0c) != kAtlasWidth ||
+        read16(bytes, version + 0x11) != kAtlasHeight || bytes[version + 0x1b] != 0x13 ||
+        bytes[mipCount] != 1) {
+        error = "Unsupported VKF texture layout (expected 256 x 256 PSMT8, one mip).";
+        return false;
+    }
+
+    // This version stores four control records followed by 95 printable ASCII
+    // records. Each has a two-byte code and ten little-endian floats.
+    std::size_t table = bytes.size();
+    for (std::size_t cursor = pixels + pixelCount; cursor + 2 + kGlyphCount * kGlyphRecordSize <= bytes.size(); ++cursor) {
+        if (read16(bytes, cursor) != kGlyphCount) continue;
+        const std::size_t candidate = cursor + 2;
+        bool valid = true;
+        for (std::size_t index = 0; index < kGlyphCount; ++index) {
+            const auto expected = index < std::size(kControlCodes) ? kControlCodes[index] :
+                static_cast<std::uint16_t>(index - std::size(kControlCodes) + 32);
+            if (read16(bytes, candidate + index * kGlyphRecordSize) != expected) { valid = false; break; }
+        }
+        if (valid) { table = candidate; break; }
+    }
+    if (table == bytes.size()) { error = "VKF ASCII glyph table was not found."; return false; }
+
+    std::array<Glyph, 128> decoded{};
+    for (std::size_t index = 0; index < kGlyphCount; ++index) {
+        const std::size_t record = table + index * kGlyphRecordSize;
+        Glyph glyph;
+        const float u0 = readFloat(bytes, record + 2);
+        const float v0 = readFloat(bytes, record + 6);
+        const float u1 = readFloat(bytes, record + 10);
+        const float v1 = readFloat(bytes, record + 14);
+        glyph.width = readFloat(bytes, record + 18);
+        glyph.height = readFloat(bytes, record + 22);
+        glyph.originX = readFloat(bytes, record + 26);
+        glyph.originY = readFloat(bytes, record + 30);
+        glyph.advanceX = readFloat(bytes, record + 34);
+        glyph.advanceY = readFloat(bytes, record + 38);
+        if (!std::isfinite(u0) || !std::isfinite(v0) || !std::isfinite(u1) || !std::isfinite(v1) ||
+            !std::isfinite(glyph.width) || !std::isfinite(glyph.height) ||
+            !std::isfinite(glyph.originX) || !std::isfinite(glyph.originY) ||
+            !std::isfinite(glyph.advanceX) || !std::isfinite(glyph.advanceY) ||
+            u0 < 0 || v0 < 0 || u1 > 1 || v1 > 1 || u1 < u0 || v1 < v0 ||
+            glyph.width < 0 || glyph.height < 0 || glyph.width > kAtlasWidth || glyph.height > kAtlasHeight) {
+            error = "VKF glyph metrics are outside the atlas."; return false;
+        }
+        glyph.source = {u0 * kAtlasWidth, v0 * kAtlasHeight, glyph.width, glyph.height};
+        glyph.present = true;
+        decoded[read16(bytes, record)] = glyph;
+    }
+
+    std::vector<std::uint8_t> rgba(pixelCount * 4);
+    for (std::size_t index = 0; index < pixelCount; ++index) {
+        const std::uint8_t color = bytes[pixels + index];
+        // PS2 CSM1 swaps each adjacent pair of eight-color CLUT groups.
+        const std::size_t paletteIndex = (color & ~std::size_t{0x18}) |
+                                         ((color & 0x08) << 1) | ((color & 0x10) >> 1);
+        const std::size_t source = palette + paletteIndex * 4;
+        const std::size_t target = index * 4;
+        rgba[target] = bytes[source];
+        rgba[target + 1] = bytes[source + 1];
+        rgba[target + 2] = bytes[source + 2];
+        rgba[target + 3] = static_cast<std::uint8_t>((std::min)(255, int(bytes[source + 3]) * 2));
+    }
+    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                                              static_cast<int>(kAtlasWidth), static_cast<int>(kAtlasHeight));
+    if (!texture || !SDL_UpdateTexture(texture, nullptr, rgba.data(), static_cast<int>(kAtlasWidth * 4)) ||
+        !SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND) ||
+        !SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)) {
+        error = SDL_GetError();
+        if (texture) SDL_DestroyTexture(texture);
+        return false;
+    }
+    if (texture_) SDL_DestroyTexture(texture_);
+    texture_ = texture;
+    glyphs_ = decoded;
+    return true;
+}
+
+void VkfTextureFont::drawText(SDL_Renderer* renderer, std::string_view text, float x, float yFromBottom,
+                              float canvasHeight, float scale) const
+{
+    if (!texture_ || !renderer) return;
+    float penX = x;
+    float penY = yFromBottom;
+    for (const unsigned char character : text) {
+        if (character >= glyphs_.size() || !glyphs_[character].present) continue;
+        const auto& glyph = glyphs_[character];
+        if (glyph.width > 0 && glyph.height > 0) {
+            const SDL_FRect destination{penX + glyph.originX * scale,
+                                        canvasHeight - (penY + glyph.originY * scale) - glyph.height * scale,
+                                        glyph.width * scale, glyph.height * scale};
+            // The archived atlas scanlines are bottom-up relative to the glyph UVs.
+            SDL_RenderTextureRotated(renderer, texture_, &glyph.source, &destination, 0.0, nullptr, SDL_FLIP_VERTICAL);
+        }
+        penX += glyph.advanceX * scale;
+        penY += glyph.advanceY * scale;
+        if (character == '\n' || character == '\r') penX = x;
+    }
+}
+
+float VkfTextureFont::textAdvance(std::string_view text, float scale) const
+{
+    float advance = 0;
+    for (const unsigned char character : text) {
+        if (character < glyphs_.size() && glyphs_[character].present)
+            advance += glyphs_[character].advanceX * scale;
+    }
+    return advance;
+}
+}

@@ -1,5 +1,7 @@
 # GameRuntime
 
+`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entry from a PCK archive, converts its indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. Its current format support is the 256 × 256 layout with four control and 95 printable ASCII records used by `euroStile14.vkf` in `INTRO.PCK`. Other VKF layouts require separate decoding before use.
+
 `GameRuntime` is the shared native reconstruction library. Executables such as
 `Tools/SHViewer` and the future main game own application startup, configuration,
 the SDL window, and top-level state selection. This library owns reusable game
