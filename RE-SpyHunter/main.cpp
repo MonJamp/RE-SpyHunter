@@ -183,12 +183,12 @@ int main(int argc, char** argv)
                     SDL_Log("Start pressed: showing MLOAD.VKI before ShMSetupState/profile menu 7.");
                 }
                 if (state == IntroState::movies && event.key.key == SDLK_X) {
-                    frontendSound.playAccept();
                     movie.requestSkip();
                 }
-                if (state == IntroState::autosaveNotice && event.key.key == SDLK_RETURN) {
-                    state = IntroState::legal;
-                    stateSeconds = 0.0;
+                if (state == IntroState::autosaveNotice &&
+                    (event.key.key == SDLK_X || event.key.key == SDLK_RETURN)) {
+                    frontendSound.playAccept();
+                    stateSeconds = (std::max)(stateSeconds, 6.25);
                 }
             }
             if (state == IntroState::pressStart && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&

@@ -103,7 +103,8 @@ bool FrontendSound::loadAccept(const std::filesystem::path& audioPackage, std::s
             samples_.push_back(static_cast<float>(sample) / 65536.0f);
         }
     }
-    const SDL_AudioSpec spec{SDL_AUDIO_F32, 1, static_cast<int>(sampleRate)};
+    // ShMSetupState::playSoundAccept passes 0.8 to asSndSetPitch via CreateSound2d.
+    const SDL_AudioSpec spec{SDL_AUDIO_F32, 1, static_cast<int>(sampleRate * 0.8f)};
     stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
     if (!stream_ || !SDL_ResumeAudioStreamDevice(stream_)) {
         error = "Could not open frontend sound output: " + std::string(SDL_GetError()); return false;
