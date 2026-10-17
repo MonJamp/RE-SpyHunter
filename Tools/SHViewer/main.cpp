@@ -31,6 +31,8 @@ struct GameFile
     std::string extension;
 };
 
+enum class BrowserFilter { all, vki, pss };
+
 struct DecodedStill
 {
     int width = 0;
@@ -195,6 +197,10 @@ int main(int argc, char* argv[])
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
     }
 
+    const size_t vkiCount = static_cast<size_t>(std::count_if(gameFiles.begin(), gameFiles.end(), [](const GameFile& file) { return file.extension == ".vki"; }));
+    const size_t pssCount = static_cast<size_t>(std::count_if(gameFiles.begin(), gameFiles.end(), [](const GameFile& file) { return file.extension == ".pss"; }));
+    BrowserFilter filter = BrowserFilter::all;
+    std::vector<size_t> browserFiles;
     size_t selectedIndex = 0, firstVisibleIndex = 0;
     size_t loadedIndex = (std::numeric_limits<size_t>::max)();
     SDL_Texture* stillTexture = nullptr;
@@ -204,14 +210,29 @@ int main(int argc, char* argv[])
                                           : "Click a file or use Up/Down and Enter to view it.";
     bool running = true;
 
+    const auto setFilter = [&](const BrowserFilter nextFilter) {
+        filter = nextFilter;
+        browserFiles.clear();
+        for (size_t index = 0; index < gameFiles.size(); ++index) {
+            if (filter == BrowserFilter::all ||
+                (filter == BrowserFilter::vki && gameFiles[index].extension == ".vki") ||
+                (filter == BrowserFilter::pss && gameFiles[index].extension == ".pss")) browserFiles.push_back(index);
+        }
+        selectedIndex = firstVisibleIndex = 0;
+        if (filter == BrowserFilter::vki) status = "Showing " + std::to_string(browserFiles.size()) + " VKI stills.";
+        else if (filter == BrowserFilter::pss) status = "Showing " + std::to_string(browserFiles.size()) + " PSS cutscenes.";
+        else status = "Showing all " + std::to_string(browserFiles.size()) + " game files.";
+    };
+    setFilter(BrowserFilter::all);
+
     const auto activateSelected = [&] {
-        if (gameFiles.empty()) return;
+        if (browserFiles.empty()) return;
         cutscene.stop();
         SDL_DestroyTexture(stillTexture);
         stillTexture = nullptr;
         stillWidth = stillHeight = 0;
-        loadedIndex = selectedIndex;
-        const GameFile& file = gameFiles[selectedIndex];
+        loadedIndex = browserFiles[selectedIndex];
+        const GameFile& file = gameFiles[loadedIndex];
         if (file.extension == ".vki") {
             std::string error;
             if (const auto decoded = decodeVki(file.path, error)) {
@@ -250,30 +271,46 @@ int main(int argc, char* argv[])
                 if (event.key.key == SDLK_ESCAPE) {
                     if (cutscene.isPlaying()) { cutscene.stop(); status = "Playback stopped."; }
                     else running = false;
-                } else if (!gameFiles.empty() && event.key.key == SDLK_DOWN) {
-                    selectedIndex = (std::min)(selectedIndex + 1, gameFiles.size() - 1);
-                } else if (!gameFiles.empty() && event.key.key == SDLK_UP) {
+                } else if (event.key.key == SDLK_1) setFilter(BrowserFilter::all);
+                else if (event.key.key == SDLK_2) setFilter(BrowserFilter::vki);
+                else if (event.key.key == SDLK_3) setFilter(BrowserFilter::pss);
+                else if (!browserFiles.empty() && event.key.key == SDLK_DOWN) {
+                    selectedIndex = (std::min)(selectedIndex + 1, browserFiles.size() - 1);
+                } else if (!browserFiles.empty() && event.key.key == SDLK_UP) {
                     selectedIndex = selectedIndex == 0 ? 0 : selectedIndex - 1;
-                } else if (!gameFiles.empty() && (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE)) {
+                } else if (!browserFiles.empty() && event.key.key == SDLK_PAGEDOWN) {
+                    selectedIndex = (std::min)(selectedIndex + visibleRows, browserFiles.size() - 1);
+                } else if (!browserFiles.empty() && event.key.key == SDLK_PAGEUP) {
+                    selectedIndex = selectedIndex > visibleRows ? selectedIndex - visibleRows : 0;
+                } else if (!browserFiles.empty() && (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE)) {
                     activateSelected();
                 }
             } else if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.y != 0.0f) {
-                if (event.wheel.y < 0.0f) firstVisibleIndex = (std::min)(firstVisibleIndex + 1, gameFiles.empty() ? size_t{0} : gameFiles.size() - 1);
-                else if (firstVisibleIndex > 0) --firstVisibleIndex;
+                const size_t maximumFirst = browserFiles.size() > visibleRows ? browserFiles.size() - visibleRows : 0;
+                if (event.wheel.y < 0.0f) firstVisibleIndex = (std::min)(firstVisibleIndex + 3, maximumFirst);
+                else firstVisibleIndex = firstVisibleIndex > 3 ? firstVisibleIndex - 3 : 0;
+                if (!browserFiles.empty()) selectedIndex = (std::clamp)(selectedIndex, firstVisibleIndex,
+                    (std::min)(firstVisibleIndex + visibleRows - 1, browserFiles.size() - 1));
             } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT &&
-                       event.button.x / spyhunter::gui::defaultUiScale >= browserLeft &&
-                       event.button.y / spyhunter::gui::defaultUiScale >= kBrowser.top) {
+                       event.button.x / spyhunter::gui::defaultUiScale >= browserLeft) {
+                const float mouseX = event.button.x / spyhunter::gui::defaultUiScale - browserLeft;
                 const float mouseY = event.button.y / spyhunter::gui::defaultUiScale;
-                const size_t row = static_cast<size_t>((mouseY - kBrowser.top) / kBrowser.rowHeight);
-                const size_t index = firstVisibleIndex + row;
-                if (index < gameFiles.size() && row < visibleRows) { selectedIndex = index; activateSelected(); }
+                if (mouseY >= 52.0f && mouseY < 78.0f) {
+                    if (mouseX < 112.0f) setFilter(BrowserFilter::all);
+                    else if (mouseX < 216.0f) setFilter(BrowserFilter::vki);
+                    else setFilter(BrowserFilter::pss);
+                } else if (mouseY >= kBrowser.top) {
+                    const size_t row = static_cast<size_t>((mouseY - kBrowser.top) / kBrowser.rowHeight);
+                    const size_t index = firstVisibleIndex + row;
+                    if (index < browserFiles.size() && row < visibleRows) { selectedIndex = index; activateSelected(); }
+                }
             }
         }
 
-        if (!gameFiles.empty()) {
+        if (!browserFiles.empty()) {
             if (selectedIndex < firstVisibleIndex) firstVisibleIndex = selectedIndex;
             if (selectedIndex >= firstVisibleIndex + visibleRows) firstVisibleIndex = selectedIndex - visibleRows + 1;
-            firstVisibleIndex = (std::min)(firstVisibleIndex, gameFiles.size() > visibleRows ? gameFiles.size() - visibleRows : size_t{0});
+            firstVisibleIndex = (std::min)(firstVisibleIndex, browserFiles.size() > visibleRows ? browserFiles.size() - visibleRows : size_t{0});
         }
         cutscene.update();
         if (!cutscene.error().empty()) status = "Playback failed: " + cutscene.error();
@@ -307,21 +344,28 @@ int main(int argc, char* argv[])
         SDL_SetRenderDrawColor(renderer, 230, 235, 245, 255);
         spyhunter::gui::text(renderer, browserLeft + 16.0f, 16.0f, "SH VIEWER");
         SDL_SetRenderDrawColor(renderer, 160, 170, 190, 255);
-        spyhunter::gui::text(renderer, browserLeft + 16.0f, 36.0f, std::to_string(gameFiles.size()) + " game files");
-        spyhunter::gui::text(renderer, browserLeft + 16.0f, 54.0f, "VKI stills / PSS cutscenes | Click or Enter: view");
-        for (size_t row = 0; row < visibleRows && firstVisibleIndex + row < gameFiles.size(); ++row) {
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, 36.0f, std::to_string(browserFiles.size()) + " shown / " + std::to_string(gameFiles.size()) + " game files");
+        SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::all ? 255 : 155, filter == BrowserFilter::all ? 255 : 170, filter == BrowserFilter::all ? 255 : 190, 255);
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, 58.0f, "ALL [1] " + std::to_string(gameFiles.size()));
+        SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::vki ? 255 : 155, filter == BrowserFilter::vki ? 255 : 170, filter == BrowserFilter::vki ? 255 : 190, 255);
+        spyhunter::gui::text(renderer, browserLeft + 120.0f, 58.0f, "VKI [2] " + std::to_string(vkiCount));
+        SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::pss ? 255 : 155, filter == BrowserFilter::pss ? 255 : 170, filter == BrowserFilter::pss ? 255 : 190, 255);
+        spyhunter::gui::text(renderer, browserLeft + 224.0f, 58.0f, "PSS [3] " + std::to_string(pssCount));
+        for (size_t row = 0; row < visibleRows && firstVisibleIndex + row < browserFiles.size(); ++row) {
             const size_t index = firstVisibleIndex + row;
+            const GameFile& file = gameFiles[browserFiles[index]];
             const SDL_FRect rowRect{browserLeft + 8.0f, kBrowser.top + row * kBrowser.rowHeight,
                                     browserRect.w - 16.0f, kBrowser.rowHeight - 2.0f};
             if (index == selectedIndex) {
                 spyhunter::gui::panel(renderer, rowRect, SDL_Color{57, 95, 152, 255});
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-            } else if (supported(gameFiles[index])) SDL_SetRenderDrawColor(renderer, 210, 218, 230, 255);
+            } else if (supported(file)) SDL_SetRenderDrawColor(renderer, 210, 218, 230, 255);
             else SDL_SetRenderDrawColor(renderer, 115, 124, 140, 255);
-            const std::string label = gameFiles[index].displayPath + (supported(gameFiles[index]) ? "" : "  [unsupported]");
+            const std::string label = file.displayPath + (supported(file) ? "" : "  [unsupported]");
             spyhunter::gui::text(renderer, rowRect.x + 6.0f, rowRect.y + 4.0f, spyhunter::gui::shorten(label, 43));
         }
         SDL_SetRenderDrawColor(renderer, 180, 190, 205, 255);
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 48.0f, "Click / Enter: view | Wheel / arrows: browse");
         spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 28.0f, spyhunter::gui::shorten(status, 44));
         SDL_RenderPresent(renderer);
         SDL_Delay(1);
