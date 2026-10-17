@@ -9,7 +9,6 @@
     <Project Path="GUI/GUI.vcxproj" Id="66b6ad5d-08ba-474e-b091-1317863d2b15" />
   </Folder>
   <Folder Name="/Tools/">
-    <Project Path="Tools/CutscenePlayer/CutscenePlayer.vcxproj" Id="eac2ca82-6168-4000-a5b5-ddafe8abe239" />
-    <Project Path="Tools/StillViewer/StillViewer.vcxproj" Id="2be94232-b78f-4f93-a2e2-7e11f8c1cf11" />
+    <Project Path="Tools/SHViewer/SHViewer.vcxproj" Id="A670DAF7-5E30-4C95-A6AB-4FD4813493A5" />
   </Folder>
 </Solution>
