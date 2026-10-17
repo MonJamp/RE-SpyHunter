@@ -88,8 +88,11 @@ void drawCentered(SDL_Renderer* renderer, SDL_Texture* texture)
 void drawLoading(SDL_Renderer* renderer)
 {
     constexpr char label[] = "LOADING...";
+    // Original main locates console row 22 and prints 55 spaces before this label.
+    constexpr float x = 55.0f * 8.0f;
+    constexpr float y = 22.0f * 16.0f;
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_RenderDebugText(renderer, (kLogicalWidth - (sizeof(label) - 1) * 8.0f) / 2.0f, 220.0f, label);
+    SDL_RenderDebugText(renderer, x, y, label);
 }
 }
 
