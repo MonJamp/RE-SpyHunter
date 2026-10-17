@@ -4,5 +4,6 @@
     <Platform Name="x86" />
   </Configurations>
   <Project Path="Configuration/Configuration.vcxproj" Id="9d580e44-f782-4532-93ed-7c2e8c7066bd" />
+  <Project Path="GameRuntime/GameRuntime.vcxproj" Id="4d3b8db7-fae5-4f43-8526-f068756cc509" />
   <Project Path="StartupPlayer/StartupPlayer.vcxproj" Id="eac2ca82-6168-4000-a5b5-ddafe8abe239" />
 </Solution>
