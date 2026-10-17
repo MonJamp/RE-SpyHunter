@@ -17,9 +17,14 @@ stereo samples before being queued to SDL. The SDL audio queue is refilled incre
 handles timing and aspect-fit rendering. `Log.GameRuntime=debug` enables open,
 queue, completion, and error diagnostics; `trace` adds refill and frame details.
 
+`PckArchive.h` exposes a read-only archive index (`open`, `entries`) and a
+bounded `readEntry` method for one serialized resource. It scans PCK metadata
+in 64 KiB blocks without loading every resource body. Entry boundaries are
+inferred from the next validated header. `VkiImage.h` decodes standalone VKIs
+and supported VKI members read from a PCK.
+
 ## Intended additions
 
-- A shared still-image service if the main runtime needs the VKI decoder currently owned by SH Viewer.
 - Startup/frontend state coordination built from named states and transition
   results. Menu transitions should depend on state IDs and actions, not on media
   decoder details.
