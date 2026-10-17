@@ -8,6 +8,8 @@
     <ClInclude Include="PckArchive.h" />
     <ClCompile Include="PckArchive.cpp" />
     <ClInclude Include="VkiImage.h" />
+    <ClInclude Include="Ps2DevConsoleFont.h" />
     <ClCompile Include="VkiImage.cpp" />
+    <ClCompile Include="Ps2DevConsoleFont.cpp" />
   </ItemGroup>
 </Project>

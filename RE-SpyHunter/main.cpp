@@ -4,6 +4,7 @@
 #include "../Configuration/SpyHunterConfig.h"
 #include "../GameRuntime/CutscenePlayer.h"
 #include "../GameRuntime/PckArchive.h"
+#include "../GameRuntime/Ps2DevConsoleFont.h"
 #include "../GameRuntime/VkiImage.h"
 #include "../GameRuntime/VkfTextureFont.h"
 
@@ -85,14 +86,10 @@ void drawCentered(SDL_Renderer* renderer, SDL_Texture* texture)
     SDL_RenderTexture(renderer, texture, nullptr, &destination);
 }
 
-void drawLoading(SDL_Renderer* renderer)
+void drawLoading(SDL_Renderer* renderer, const spyhunter::runtime::Ps2DevConsoleFont& font)
 {
-    constexpr char label[] = "LOADING...";
-    // Original main locates console row 22 and prints 55 spaces before this label.
-    constexpr float x = 55.0f * 8.0f;
-    constexpr float y = 22.0f * 16.0f;
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_RenderDebugText(renderer, x, y, label);
+    // sceDevCons uses row 22 and 55 leading spaces; captured boot frame refines its screen mapping.
+    font.draw(renderer, "LOADING...", 440.0f, 382.0f, 6.5f, 16.0f, 0x40);
 }
 }
 
@@ -145,6 +142,15 @@ int main(int argc, char** argv)
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
     }
     SDL_Log("Loaded euroStile14.vkf from INTRO.PCK for intro text.");
+
+    spyhunter::runtime::Ps2DevConsoleFont consoleFont;
+    if (!consoleFont.load(renderer, root / "SLUS_200.56", error)) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "RE::SpyHunter console font", error.c_str(), window);
+        introFont.unload();
+        SDL_DestroyTexture(legalTexture); SDL_DestroyTexture(logoTexture);
+        if (loadingTexture) SDL_DestroyTexture(loadingTexture);
+        SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
+    }
 
     const std::vector<std::filesystem::path> movies{
         root / "MOVIES" / "M_LOGO.PSS",
@@ -218,7 +224,7 @@ int main(int argc, char** argv)
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         if (state == IntroState::loading) {
-            drawLoading(renderer);
+            drawLoading(renderer, consoleFont);
         } else if (state == IntroState::autosaveNotice) {
             if (configResult.config->autosaveEnabled) {
                 introFont.drawText(renderer, "A U T O S A V E   I S   E N A B L E D", 100.0f, 200.0f,
@@ -238,7 +244,7 @@ int main(int argc, char** argv)
                                static_cast<float>(kLogicalHeight), 0.8f);
         } else if (state == IntroState::preMenuLoading) {
             if (loadingTexture) drawCentered(renderer, loadingTexture);
-            else drawLoading(renderer);
+            else drawLoading(renderer, consoleFont);
         }
         SDL_RenderPresent(renderer);
         SDL_Delay(8);
@@ -249,6 +255,7 @@ int main(int argc, char** argv)
     if (logoTexture) SDL_DestroyTexture(logoTexture);
     if (loadingTexture) SDL_DestroyTexture(loadingTexture);
     introFont.unload();
+    consoleFont.unload();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
