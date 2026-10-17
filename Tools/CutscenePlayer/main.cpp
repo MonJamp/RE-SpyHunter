@@ -12,8 +12,9 @@
 
 namespace
 {
-constexpr int kInitialWindowWidth = 1280;
-constexpr int kInitialWindowHeight = 720;
+constexpr int kInitialWindowWidth = 2560;
+constexpr int kInitialWindowHeight = 1440;
+constexpr float kUiScale = 2.0f;
 constexpr float kBrowserWidth = 340.0f;
 constexpr float kRowHeight = 22.0f;
 constexpr float kBrowserTop = 88.0f;
@@ -110,6 +111,13 @@ int main(int argc, char* argv[])
         SDL_Quit();
         return 1;
     }
+    if (!SDL_SetRenderScale(renderer, kUiScale, kUiScale)) {
+        SDL_Log("UI scaling setup failed: %s", SDL_GetError());
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
 
     spyhunter::runtime::CutsceneSession session;
     size_t selectedIndex = 0;
@@ -133,11 +141,13 @@ int main(int argc, char* argv[])
     };
 
     while (running) {
-        int outputWidth = 0;
-        int outputHeight = 0;
-        SDL_GetCurrentRenderOutputSize(renderer, &outputWidth, &outputHeight);
-        const float browserLeft = (std::max)(0.0f, static_cast<float>(outputWidth) - kBrowserWidth);
-        const SDL_FRect browserRect{browserLeft, 0.0f, static_cast<float>(outputWidth) - browserLeft, static_cast<float>(outputHeight)};
+        int outputWidthInPixels = 0;
+        int outputHeightInPixels = 0;
+        SDL_GetCurrentRenderOutputSize(renderer, &outputWidthInPixels, &outputHeightInPixels);
+        const float outputWidth = outputWidthInPixels / kUiScale;
+        const float outputHeight = outputHeightInPixels / kUiScale;
+        const float browserLeft = (std::max)(0.0f, outputWidth - kBrowserWidth);
+        const SDL_FRect browserRect{browserLeft, 0.0f, outputWidth - browserLeft, outputHeight};
         const size_t visibleRows = (std::max)(1, static_cast<int>((browserRect.h - kBrowserTop - 44.0f) / kRowHeight));
 
         SDL_Event event;
@@ -166,8 +176,9 @@ int main(int argc, char* argv[])
                     --firstVisibleIndex;
                 }
             } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT &&
-                       event.button.x >= browserLeft && event.button.y >= kBrowserTop) {
-                const size_t row = static_cast<size_t>((event.button.y - kBrowserTop) / kRowHeight);
+                       event.button.x / kUiScale >= browserLeft && event.button.y / kUiScale >= kBrowserTop) {
+                const float mouseY = event.button.y / kUiScale;
+                const size_t row = static_cast<size_t>((mouseY - kBrowserTop) / kRowHeight);
                 const size_t index = firstVisibleIndex + row;
                 if (index < cutscenes.size() && row < visibleRows) {
                     selectedIndex = index;
@@ -187,7 +198,7 @@ int main(int argc, char* argv[])
         SDL_SetRenderDrawColor(renderer, 12, 14, 20, 255);
         SDL_RenderClear(renderer);
 
-        const SDL_FRect videoViewport{0.0f, 0.0f, browserLeft, static_cast<float>(outputHeight)};
+        const SDL_FRect videoViewport{0.0f, 0.0f, browserLeft, outputHeight};
         drawPanel(renderer, videoViewport, SDL_Color{0, 0, 0, 255});
         session.render(renderer, videoViewport);
         if (!session.isPlaying()) {
@@ -198,7 +209,7 @@ int main(int argc, char* argv[])
 
         drawPanel(renderer, browserRect, SDL_Color{27, 31, 42, 255});
         SDL_SetRenderDrawColor(renderer, 89, 104, 132, 255);
-        SDL_RenderLine(renderer, browserLeft, 0.0f, browserLeft, static_cast<float>(outputHeight));
+        SDL_RenderLine(renderer, browserLeft, 0.0f, browserLeft, outputHeight);
         SDL_SetRenderDrawColor(renderer, 230, 235, 245, 255);
         drawText(renderer, browserLeft + 16.0f, 16.0f, "CUTSCENE BROWSER");
         SDL_SetRenderDrawColor(renderer, 160, 170, 190, 255);
@@ -218,7 +229,7 @@ int main(int argc, char* argv[])
         }
 
         SDL_SetRenderDrawColor(renderer, 180, 190, 205, 255);
-        drawText(renderer, browserLeft + 16.0f, static_cast<float>(outputHeight) - 28.0f, shorten(status, 45));
+        drawText(renderer, browserLeft + 16.0f, outputHeight - 28.0f, shorten(status, 45));
         SDL_RenderPresent(renderer);
         SDL_Delay(1);
     }
