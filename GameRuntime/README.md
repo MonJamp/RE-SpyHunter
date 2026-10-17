@@ -1,7 +1,7 @@
 # GameRuntime
 
 `GameRuntime` is the shared native reconstruction library. Executables such as
-`Tools/StartupPlayer` and the future main game own application startup, configuration,
+`Tools/CutscenePlayer` and the future main game own application startup, configuration,
 the SDL window, and top-level state selection. This library owns reusable game
 presentation and runtime services.
 

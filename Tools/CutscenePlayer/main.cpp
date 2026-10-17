@@ -36,7 +36,7 @@ int main(int argc, char* argv[])
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer(
-        "SpyHunter - Startup Player - M_LOGO.PSS", 960, 720,
+        "SpyHunter - Cutscene Player - M_LOGO.PSS", 960, 720,
         SDL_WINDOW_RESIZABLE, &window, &renderer)) {
         SDL_Log("Window creation failed: %s", SDL_GetError());
         SDL_Quit();
