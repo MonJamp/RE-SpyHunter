@@ -84,14 +84,79 @@ void drawCentered(SDL_Renderer* renderer, SDL_Texture* texture)
     SDL_RenderTexture(renderer, texture, nullptr, &destination);
 }
 
-void drawTextCentered(SDL_Renderer* renderer, float y, const char* text, float scale = 1.0f)
+// The PS2 startup notice uses tracked, squared capitals on black. A compact 5x7
+// bitmap face keeps that look deterministic across hosts without a system font.
+struct IntroGlyph
 {
-    // SDL's built-in debug font is fixed-width; center its 8-pixel glyphs in the logical canvas.
-    const float x = (kLogicalWidth - static_cast<float>(SDL_strlen(text)) * 8.0f * scale) / 2.0f;
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_SetRenderScale(renderer, scale, scale);
-    SDL_RenderDebugText(renderer, x / scale, y / scale, text);
-    SDL_SetRenderScale(renderer, 1.0f, 1.0f);
+    char character;
+    std::uint8_t rows[7];
+};
+
+constexpr IntroGlyph kIntroGlyphs[] = {
+    {'A', {14,17,17,31,17,17,17}}, {'B', {30,17,17,30,17,17,30}},
+    {'C', {14,17,16,16,16,17,14}}, {'D', {30,17,17,17,17,17,30}},
+    {'E', {31,16,16,30,16,16,31}}, {'F', {31,16,16,30,16,16,16}},
+    {'G', {14,17,16,23,17,17,15}}, {'H', {17,17,17,31,17,17,17}},
+    {'I', {14,4,4,4,4,4,14}},      {'J', {7,2,2,2,18,18,12}},
+    {'K', {17,18,20,24,20,18,17}}, {'L', {16,16,16,16,16,16,31}},
+    {'M', {17,27,21,21,17,17,17}}, {'N', {17,25,21,19,17,17,17}},
+    {'O', {14,17,17,17,17,17,14}}, {'P', {30,17,17,30,16,16,16}},
+    {'Q', {14,17,17,17,21,18,13}}, {'R', {30,17,17,30,20,18,17}},
+    {'S', {15,16,16,14,1,1,30}},   {'T', {31,4,4,4,4,4,4}},
+    {'U', {17,17,17,17,17,17,14}}, {'V', {17,17,17,17,17,10,4}},
+    {'W', {17,17,17,21,21,21,10}}, {'X', {17,17,10,4,10,17,17}},
+    {'Y', {17,17,10,4,4,4,4}},     {'Z', {31,1,2,4,8,16,31}},
+    {'0', {14,17,19,21,25,17,14}}, {'1', {4,12,4,4,4,4,14}},
+    {'2', {14,17,1,2,4,8,31}},     {'3', {30,1,1,14,1,1,30}},
+    {'4', {2,6,10,18,31,2,2}},     {'5', {31,16,16,30,1,1,30}},
+    {'6', {14,16,16,30,17,17,14}}, {'7', {31,1,2,4,8,8,8}},
+    {'8', {14,17,17,14,17,17,14}}, {'9', {14,17,17,15,1,1,14}},
+    {'.', {0,0,0,0,0,12,12}},      {':', {0,12,12,0,12,12,0}},
+    {'-', {0,0,0,31,0,0,0}},       {'\'', {12,12,8,0,0,0,0}}
+};
+
+const IntroGlyph* findIntroGlyph(char character)
+{
+    const auto found = std::find_if(std::begin(kIntroGlyphs), std::end(kIntroGlyphs),
+        [character](const IntroGlyph& glyph) { return glyph.character == character; });
+    return found == std::end(kIntroGlyphs) ? nullptr : found;
+}
+
+void drawIntroTextCentered(SDL_Renderer* renderer, float centerY, const char* text,
+                           float glyphScale = 1.0f, float tracking = 3.0f)
+{
+    // Per-glyph rectangles allow wide tracking and a low-intensity halo at every output size.
+    constexpr float glyphWidth = 5.0f;
+    constexpr float glyphHeight = 7.0f;
+    constexpr float advance = glyphWidth + 1.0f;
+    const std::string value(text);
+    const float step = (advance + tracking) * glyphScale;
+    const float width = value.empty() ? 0.0f : step * value.size() - tracking * glyphScale;
+    const float startX = (kLogicalWidth - width) * 0.5f;
+    const float startY = centerY - glyphHeight * glyphScale * 0.5f;
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const char character = value[index];
+        if (character == ' ') continue;
+        const auto* glyph = findIntroGlyph(character);
+        if (!glyph) continue;
+        for (int row = 0; row < 7; ++row) {
+            for (int column = 0; column < 5; ++column) {
+                if ((glyph->rows[row] & (1u << (4 - column))) == 0) continue;
+                const SDL_FRect pixel{
+                    startX + static_cast<float>(index) * step + column * glyphScale,
+                    startY + row * glyphScale,
+                    glyphScale, glyphScale
+                };
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 26);
+                const SDL_FRect halo{pixel.x - glyphScale, pixel.y - glyphScale,
+                                     pixel.w + glyphScale * 2, pixel.h + glyphScale * 2};
+                SDL_RenderFillRect(renderer, &halo);
+                SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
+                SDL_RenderFillRect(renderer, &pixel);
+            }
+        }
+    }
 }
 }
 
@@ -206,16 +271,13 @@ int main(int argc, char** argv)
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         if (state == IntroState::loading) {
-            drawTextCentered(renderer, 210.0f, "LOADING...");
+            drawIntroTextCentered(renderer, 224.0f, "LOADING...", 1.4f, 2.0f);
         } else if (state == IntroState::autosaveNotice) {
             if (configResult.config->autosaveEnabled) {
-                drawTextCentered(renderer, 165.0f, "CAUTION: SPY HUNTER USES AN AUTOSAVE FEATURE.");
-                drawTextCentered(renderer, 195.0f, "A MEMORY CARD MAY BE REQUIRED TO SAVE.");
+                drawIntroTextCentered(renderer, 244.0f, "AUTOSAVE IS ENABLED", 1.8f, 3.3f);
             } else {
-                drawTextCentered(renderer, 165.0f, "AUTOSAVE IS DISABLED.");
-                drawTextCentered(renderer, 195.0f, "GAME PROGRESS WILL NOT BE SAVED.");
+                drawIntroTextCentered(renderer, 244.0f, "AUTOSAVE IS DISABLED", 1.8f, 3.3f);
             }
-            drawTextCentered(renderer, 225.0f, "PRESS ENTER TO CONTINUE");
         } else if (state == IntroState::legal) {
             drawCentered(renderer, legalTexture);
         } else if (state == IntroState::movies) {
@@ -223,10 +285,10 @@ int main(int argc, char** argv)
             movie.render(renderer, viewport);
         } else if (state == IntroState::pressStart) {
             drawCentered(renderer, logoTexture);
-            drawTextCentered(renderer, 382.0f, "P R E S S  S T A R T  B U T T O N", 1.2f);
+            drawIntroTextCentered(renderer, 382.0f, "PRESS START BUTTON", 1.2f, 2.0f);
         } else if (state == IntroState::preMenuLoading) {
             if (loadingTexture) drawCentered(renderer, loadingTexture);
-            else drawTextCentered(renderer, 210.0f, "LOADING...");
+            else drawIntroTextCentered(renderer, 224.0f, "LOADING...", 1.4f, 2.0f);
         }
         SDL_RenderPresent(renderer);
         SDL_Delay(8);

@@ -11,3 +11,5 @@ RE::SpyHunter is a native reconstruction of the PlayStation 2 game SpyHunter (20
 - [`Tools`](Tools/README.md) contains focused applications for inspecting game files, including SH Viewer. Tool controls and behavior are documented there.
 
 The solution uses C++20, Visual Studio, and SDL3. Build and local configuration instructions are in [BUILDING.md](BUILDING.md).
+
+The autosave notice styling is based on the user-supplied PCSX2 capture at [`reference-captures/autosave-enabled-2026-10-17.png`](../../reference-captures/autosave-enabled-2026-10-17.png). The native font is a small in-source approximation; exact original font data and pixel matching remain open.
