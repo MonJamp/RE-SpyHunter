@@ -42,6 +42,7 @@ ARM64/
 
 # Machine-local shared configuration (copy SpyHunter.config.example)
 /SpyHunter.config
+/SpyHunter.local.props
 
 # Keep solution/project definitions, filters, and source files tracked.
 # Do not globally ignore .lib: future vendored dependencies may need them.

@@ -111,19 +111,19 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SPYHUNTER_SDL3_ROOT)\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SDL3Root)\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SPYHUNTER_SDL3_ROOT)\lib\x64</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(SDL3Root)\lib\x64</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
     <PostBuildEvent>
-      <Command>copy /Y "$(SPYHUNTER_SDL3_ROOT)\lib\x64\SDL3.dll" "$(OutDir)"</Command>
+      <Command>copy /Y "$(SDL3Root)\lib\x64\SDL3.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -153,6 +153,11 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="ValidateSDL3Root" BeforeTargets="PrepareForBuild" Condition="'$(Platform)'=='x64'">
+    <Error Condition="'$(SDL3Root)'==''" Text="SDL3Root is not configured. Copy SpyHunter.local.props.example to SpyHunter.local.props and set SDL3Root to your SDL3 directory." />
+    <Error Condition="!Exists('$(SDL3Root)\include\SDL3\SDL.h')" Text="SDL3Root does not contain include\SDL3\SDL.h: $(SDL3Root)" />
+    <Error Condition="!Exists('$(SDL3Root)\lib\x64\SDL3.lib')" Text="SDL3Root does not contain lib\x64\SDL3.lib: $(SDL3Root)" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

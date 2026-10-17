@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup Condition="'$(Platform)'=='x64'">
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)SpyHunter.local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)SpyHunter.local.props')" />
+</Project>

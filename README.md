@@ -10,6 +10,8 @@ ExtractedBinariesPath=C:\path\to\Extracted Binaries
 
 Copy `SpyHunter.config.example` to `SpyHunter.config` and adjust the path for the current machine. The real file is ignored by Git because it is machine-specific. Relative values are resolved from the configuration file's directory.
 
-Set the `SPYHUNTER_SDL3_ROOT` environment variable to the local SDL3 distribution directory before building. The project derives its include, library, and runtime DLL paths from that variable so no developer-specific dependency location is committed.
+Copy `SpyHunter.local.props.example` to `SpyHunter.local.props` and set `SDL3Root` to the local SDL3 distribution directory before building. The real properties file is ignored by Git. The project derives its include, library, and runtime DLL paths from that property so no developer-specific dependency location is committed.
+
+Build the `x64` solution platform. When building from a terminal, use the x64 Visual Studio developer environment or the x64 MSBuild executable. The 32-bit MSBuild host can fail at link time with an incompatible `MSPDB140.DLL` even though compilation succeeds.
 
 `StartupPlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It currently resolves and validates `MOVIES/M_LOGO.PSS`, the first logo movie selected for playback integration; actual PSS decoding is not implemented yet.
