@@ -154,10 +154,10 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Configuration\Configuration.vcxproj">
+    <ProjectReference Include="..\..\Configuration\Configuration.vcxproj">
       <Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project>
     </ProjectReference>
-    <ProjectReference Include="..\GameRuntime\GameRuntime.vcxproj">
+    <ProjectReference Include="..\..\GameRuntime\GameRuntime.vcxproj">
       <Project>{4d3b8db7-fae5-4f43-8526-f068756cc509}</Project>
     </ProjectReference>
   </ItemGroup>

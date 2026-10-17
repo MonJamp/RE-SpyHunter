@@ -1,8 +1,8 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
-#include "../Configuration/SpyHunterConfig.h"
-#include "../GameRuntime/CutscenePlayer.h"
+#include "../../Configuration/SpyHunterConfig.h"
+#include "../../GameRuntime/CutscenePlayer.h"
 
 #include <filesystem>
 

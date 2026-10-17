@@ -14,8 +14,8 @@ Copy `SpyHunter.local.props.example` to `SpyHunter.local.props` and set `SDL3Roo
 
 Build the `x64` solution platform. When building from a terminal, use the x64 Visual Studio developer environment or the x64 MSBuild executable. The 32-bit MSBuild host can fail at link time with an incompatible `MSPDB140.DLL` even though compilation succeeds.
 
-`StartupPlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It plays `MOVIES/M_LOGO.PSS` with MPEG-2 video decoded by Windows Media Foundation and the PSS Sony PCM stream played through SDL3. Escape or closing the window stops playback.
+`Tools/StartupPlayer` accepts an explicit configuration path as its first command-line argument. Without one, it searches for `SpyHunter.config` from its working directory upward. It plays `MOVIES/M_LOGO.PSS` with MPEG-2 video decoded by Windows Media Foundation and the PSS Sony PCM stream played through SDL3. Escape or closing the window stops playback.
 
 The player creates an ignored `local-assets/M_LOGO.mpg` working copy because Windows' MPEG source resolver requires a recognized container suffix. The source PSS and everything under the extracted/original trees remain unchanged.
 
-Reusable runtime behavior lives in the `GameRuntime` static library. `StartupPlayer` is intentionally a small client of its public `playCutscene` API; the future main game project can link the same library. See [GameRuntime](GameRuntime/README.md) for the ownership boundary and planned still-image/state additions.
+Utility and focused executable projects live under `Tools`; reusable libraries and the future main game remain separate. `StartupPlayer` is intentionally a small client of the `GameRuntime` library's public `playCutscene` API. See [GameRuntime](GameRuntime/README.md) for the ownership boundary and planned still-image/state additions.
