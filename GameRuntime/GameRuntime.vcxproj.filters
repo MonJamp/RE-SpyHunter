@@ -9,7 +9,9 @@
     <ClCompile Include="PckArchive.cpp" />
     <ClInclude Include="VkiImage.h" />
     <ClInclude Include="Ps2DevConsoleFont.h" />
+    <ClInclude Include="FrontendSound.h" />
     <ClCompile Include="VkiImage.cpp" />
     <ClCompile Include="Ps2DevConsoleFont.cpp" />
+    <ClCompile Include="FrontendSound.cpp" />
   </ItemGroup>
 </Project>

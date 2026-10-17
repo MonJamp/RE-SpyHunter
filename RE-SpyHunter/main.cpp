@@ -3,6 +3,7 @@
 
 #include "../Configuration/SpyHunterConfig.h"
 #include "../GameRuntime/CutscenePlayer.h"
+#include "../GameRuntime/FrontendSound.h"
 #include "../GameRuntime/PckArchive.h"
 #include "../GameRuntime/Ps2DevConsoleFont.h"
 #include "../GameRuntime/VkiImage.h"
@@ -157,6 +158,10 @@ int main(int argc, char** argv)
         root / "MOVIES" / "PEILOGO.PSS",
         root / "MOVIES" / "INTRO.PSS"
     };
+    spyhunter::runtime::FrontendSound frontendSound;
+    if (!frontendSound.loadAccept(root / "DATA" / "AUDIO.MPK", error)) {
+        SDL_Log("Frontend accept sound unavailable: %s", error.c_str());
+    }
     spyhunter::runtime::CutsceneSession movie;
     std::size_t movieIndex = 0;
     IntroState state = IntroState::loading;
@@ -172,11 +177,13 @@ int main(int argc, char** argv)
                 if (event.key.key == SDLK_ESCAPE) running = false;
                 if (state == IntroState::pressStart &&
                     (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE || event.key.key == SDLK_S)) {
+                    frontendSound.playAccept();
                     state = IntroState::preMenuLoading;
                     stateSeconds = 0.0;
                     SDL_Log("Start pressed: showing MLOAD.VKI before ShMSetupState/profile menu 7.");
                 }
                 if (state == IntroState::movies && event.key.key == SDLK_X) {
+                    frontendSound.playAccept();
                     movie.requestSkip();
                 }
                 if (state == IntroState::autosaveNotice && event.key.key == SDLK_RETURN) {
@@ -186,6 +193,7 @@ int main(int argc, char** argv)
             }
             if (state == IntroState::pressStart && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 event.button.button == SDL_BUTTON_LEFT) {
+                frontendSound.playAccept();
                 state = IntroState::preMenuLoading;
                 stateSeconds = 0.0;
                 SDL_Log("Start clicked: showing MLOAD.VKI before ShMSetupState/profile menu 7.");
