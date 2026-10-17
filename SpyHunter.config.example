@@ -1,0 +1,2 @@
+# Copy this file to SpyHunter.config and update the path for this machine.
+ExtractedBinariesPath=<absolute path to the extracted game files>

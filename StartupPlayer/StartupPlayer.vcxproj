@@ -111,19 +111,19 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\RE Tools\SDL3\SDL3-3.4.18\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SPYHUNTER_SDL3_ROOT)\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\RE Tools\SDL3\SDL3-3.4.18\lib\x64</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(SPYHUNTER_SDL3_ROOT)\lib\x64</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
     <PostBuildEvent>
-      <Command>copy /Y "C:\RE Tools\SDL3\SDL3-3.4.18\lib\x64\SDL3.dll" "$(OutDir)"</Command>
+      <Command>copy /Y "$(SPYHUNTER_SDL3_ROOT)\lib\x64\SDL3.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -146,6 +146,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Configuration\Configuration.vcxproj">
+      <Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

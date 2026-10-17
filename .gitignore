@@ -40,5 +40,8 @@ ARM64/
 /local-assets/
 /captures/
 
+# Machine-local shared configuration (copy SpyHunter.config.example)
+/SpyHunter.config
+
 # Keep solution/project definitions, filters, and source files tracked.
 # Do not globally ignore .lib: future vendored dependencies may need them.

@@ -3,5 +3,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="Configuration/Configuration.vcxproj" />
   <Project Path="StartupPlayer/StartupPlayer.vcxproj" />
 </Solution>
