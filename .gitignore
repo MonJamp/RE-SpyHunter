@@ -1,0 +1,44 @@
+# Visual Studio local settings and caches
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.db-shm
+*.VC.db-wal
+*.VC.opendb
+ipch/
+
+# Build output and intermediate directories (all solution projects)
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+x64/
+x86/
+ARM/
+ARM64/
+[Bb]uild/
+[Oo]ut/
+
+# MSVC compiler, linker, and debugger artifacts
+*.obj
+*.pch
+*.pdb
+*.idb
+*.ilk
+*.ipdb
+*.iobj
+*.tlog/
+*.lastbuildstate
+*.VC.VC.opendb
+*.exe
+*.dll
+*.exp
+
+# Local media experiments and generated captures
+/local-assets/
+/captures/
+
+# Keep solution/project definitions, filters, and source files tracked.
+# Do not globally ignore .lib: future vendored dependencies may need them.
