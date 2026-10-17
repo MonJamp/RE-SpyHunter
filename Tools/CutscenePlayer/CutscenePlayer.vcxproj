@@ -154,6 +154,9 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\GUI\GUI.vcxproj">
+      <Project>{66b6ad5d-08ba-474e-b091-1317863d2b15}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\..\Configuration\Configuration.vcxproj">
       <Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project>
     </ProjectReference>

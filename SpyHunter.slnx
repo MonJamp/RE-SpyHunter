@@ -5,7 +5,11 @@
   </Configurations>
   <Project Path="Configuration/Configuration.vcxproj" Id="9d580e44-f782-4532-93ed-7c2e8c7066bd" />
   <Project Path="GameRuntime/GameRuntime.vcxproj" Id="4d3b8db7-fae5-4f43-8526-f068756cc509" />
+  <Folder Name="/GUI/">
+    <Project Path="GUI/GUI.vcxproj" Id="66b6ad5d-08ba-474e-b091-1317863d2b15" />
+  </Folder>
   <Folder Name="/Tools/">
     <Project Path="Tools/CutscenePlayer/CutscenePlayer.vcxproj" Id="eac2ca82-6168-4000-a5b5-ddafe8abe239" />
+    <Project Path="Tools/StillViewer/StillViewer.vcxproj" Id="2be94232-b78f-4f93-a2e2-7e11f8c1cf11" />
   </Folder>
 </Solution>

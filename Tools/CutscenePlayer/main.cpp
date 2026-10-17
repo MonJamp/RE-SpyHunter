@@ -3,6 +3,7 @@
 
 #include "../../Configuration/SpyHunterConfig.h"
 #include "../../GameRuntime/CutscenePlayer.h"
+#include "../../GUI/Gui.h"
 
 #include <algorithm>
 #include <cctype>
@@ -12,12 +13,7 @@
 
 namespace
 {
-constexpr int kInitialWindowWidth = 2560;
-constexpr int kInitialWindowHeight = 1440;
-constexpr float kUiScale = 2.0f;
-constexpr float kBrowserWidth = 340.0f;
-constexpr float kRowHeight = 22.0f;
-constexpr float kBrowserTop = 88.0f;
+constexpr spyhunter::gui::BrowserLayout kBrowser;
 
 struct CutsceneFile
 {
@@ -62,23 +58,6 @@ std::vector<CutsceneFile> findCutscenes(const std::filesystem::path& root)
     return cutscenes;
 }
 
-std::string shorten(const std::string& text, const size_t maximumCharacters)
-{
-    if (text.size() <= maximumCharacters) return text;
-    if (maximumCharacters < 4) return text.substr(0, maximumCharacters);
-    return text.substr(0, maximumCharacters - 3) + "...";
-}
-
-void drawText(SDL_Renderer* renderer, float x, float y, const std::string& text)
-{
-    SDL_RenderDebugText(renderer, x, y, text.c_str());
-}
-
-void drawPanel(SDL_Renderer* renderer, const SDL_FRect& rectangle, SDL_Color color)
-{
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderFillRect(renderer, &rectangle);
-}
 }
 
 int main(int argc, char* argv[])
@@ -105,13 +84,13 @@ int main(int argc, char* argv[])
 
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
-    if (!SDL_CreateWindowAndRenderer("SpyHunter - Cutscene Player", kInitialWindowWidth, kInitialWindowHeight,
+    if (!SDL_CreateWindowAndRenderer("SpyHunter - Cutscene Player", spyhunter::gui::defaultWindowWidth, spyhunter::gui::defaultWindowHeight,
                                      SDL_WINDOW_RESIZABLE, &window, &renderer)) {
         SDL_Log("Window creation failed: %s", SDL_GetError());
         SDL_Quit();
         return 1;
     }
-    if (!SDL_SetRenderScale(renderer, kUiScale, kUiScale)) {
+    if (!spyhunter::gui::configureRenderer(renderer)) {
         SDL_Log("UI scaling setup failed: %s", SDL_GetError());
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
@@ -144,11 +123,11 @@ int main(int argc, char* argv[])
         int outputWidthInPixels = 0;
         int outputHeightInPixels = 0;
         SDL_GetCurrentRenderOutputSize(renderer, &outputWidthInPixels, &outputHeightInPixels);
-        const float outputWidth = outputWidthInPixels / kUiScale;
-        const float outputHeight = outputHeightInPixels / kUiScale;
-        const float browserLeft = (std::max)(0.0f, outputWidth - kBrowserWidth);
+        const float outputWidth = outputWidthInPixels / spyhunter::gui::defaultUiScale;
+        const float outputHeight = outputHeightInPixels / spyhunter::gui::defaultUiScale;
+        const float browserLeft = (std::max)(0.0f, outputWidth - kBrowser.width);
         const SDL_FRect browserRect{browserLeft, 0.0f, outputWidth - browserLeft, outputHeight};
-        const size_t visibleRows = (std::max)(1, static_cast<int>((browserRect.h - kBrowserTop - 44.0f) / kRowHeight));
+        const size_t visibleRows = (std::max)(1, static_cast<int>((browserRect.h - kBrowser.top - 44.0f) / kBrowser.rowHeight));
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -176,9 +155,9 @@ int main(int argc, char* argv[])
                     --firstVisibleIndex;
                 }
             } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT &&
-                       event.button.x / kUiScale >= browserLeft && event.button.y / kUiScale >= kBrowserTop) {
-                const float mouseY = event.button.y / kUiScale;
-                const size_t row = static_cast<size_t>((mouseY - kBrowserTop) / kRowHeight);
+                       event.button.x / spyhunter::gui::defaultUiScale >= browserLeft && event.button.y / spyhunter::gui::defaultUiScale >= kBrowser.top) {
+                const float mouseY = event.button.y / spyhunter::gui::defaultUiScale;
+                const size_t row = static_cast<size_t>((mouseY - kBrowser.top) / kBrowser.rowHeight);
                 const size_t index = firstVisibleIndex + row;
                 if (index < cutscenes.size() && row < visibleRows) {
                     selectedIndex = index;
@@ -199,37 +178,37 @@ int main(int argc, char* argv[])
         SDL_RenderClear(renderer);
 
         const SDL_FRect videoViewport{0.0f, 0.0f, browserLeft, outputHeight};
-        drawPanel(renderer, videoViewport, SDL_Color{0, 0, 0, 255});
+        spyhunter::gui::panel(renderer, videoViewport, SDL_Color{0, 0, 0, 255});
         session.render(renderer, videoViewport);
         if (!session.isPlaying()) {
             SDL_SetRenderDrawColor(renderer, 170, 180, 195, 255);
-            drawText(renderer, 24.0f, 24.0f, "Cutscene preview");
-            drawText(renderer, 24.0f, 42.0f, "Choose a .PSS file from the browser.");
+            spyhunter::gui::text(renderer, 24.0f, 24.0f, "Cutscene preview");
+            spyhunter::gui::text(renderer, 24.0f, 42.0f, "Choose a .PSS file from the browser.");
         }
 
-        drawPanel(renderer, browserRect, SDL_Color{27, 31, 42, 255});
+        spyhunter::gui::panel(renderer, browserRect, SDL_Color{27, 31, 42, 255});
         SDL_SetRenderDrawColor(renderer, 89, 104, 132, 255);
         SDL_RenderLine(renderer, browserLeft, 0.0f, browserLeft, outputHeight);
         SDL_SetRenderDrawColor(renderer, 230, 235, 245, 255);
-        drawText(renderer, browserLeft + 16.0f, 16.0f, "CUTSCENE BROWSER");
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, 16.0f, "CUTSCENE BROWSER");
         SDL_SetRenderDrawColor(renderer, 160, 170, 190, 255);
-        drawText(renderer, browserLeft + 16.0f, 36.0f, std::to_string(cutscenes.size()) + " .PSS files");
-        drawText(renderer, browserLeft + 16.0f, 54.0f, "Click / Enter: play | Esc: stop");
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, 36.0f, std::to_string(cutscenes.size()) + " .PSS files");
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, 54.0f, "Click / Enter: play | Esc: stop");
 
         for (size_t row = 0; row < visibleRows && firstVisibleIndex + row < cutscenes.size(); ++row) {
             const size_t index = firstVisibleIndex + row;
-            const SDL_FRect rowRect{browserLeft + 8.0f, kBrowserTop + row * kRowHeight, browserRect.w - 16.0f, kRowHeight - 2.0f};
+            const SDL_FRect rowRect{browserLeft + 8.0f, kBrowser.top + row * kBrowser.rowHeight, browserRect.w - 16.0f, kBrowser.rowHeight - 2.0f};
             if (index == selectedIndex) {
-                drawPanel(renderer, rowRect, SDL_Color{57, 95, 152, 255});
+                spyhunter::gui::panel(renderer, rowRect, SDL_Color{57, 95, 152, 255});
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
             } else {
                 SDL_SetRenderDrawColor(renderer, 210, 218, 230, 255);
             }
-            drawText(renderer, rowRect.x + 6.0f, rowRect.y + 4.0f, shorten(cutscenes[index].displayPath, 43));
+            spyhunter::gui::text(renderer, rowRect.x + 6.0f, rowRect.y + 4.0f, spyhunter::gui::shorten(cutscenes[index].displayPath, 43));
         }
 
         SDL_SetRenderDrawColor(renderer, 180, 190, 205, 255);
-        drawText(renderer, browserLeft + 16.0f, outputHeight - 28.0f, shorten(status, 45));
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, outputHeight - 28.0f, spyhunter::gui::shorten(status, 45));
         SDL_RenderPresent(renderer);
         SDL_Delay(1);
     }

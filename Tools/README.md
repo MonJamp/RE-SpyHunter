@@ -8,11 +8,16 @@ This directory contains small executable applications that help develop and insp
 
 The executable reads `SpyHunter.config` to find extracted assets. Pass the config path as the first argument, or let the tool search upward from its working directory. The current playback implementation is provided by the shared [`GameRuntime` library](../GameRuntime/README.md), through its non-blocking `CutsceneSession` API. The tool owns its window, browser, SDL setup, and asset selection.
 
+## StillViewer
+
+`StillViewer` is the companion asset browser for static images. It uses the same configuration, 2560 × 1440 default window, 2× UI scale, and right-side browser layout as CutscenePlayer. It recursively inventories standalone `.VKI` containers and ordinary image files beneath the extracted-binaries root. The initial release records the native `vkImage` dimensions and selection state; rendering the encoded `.VKI` pixels and extracting packed `INTRO.PCK` assets are deliberately isolated behind the still-image decoder boundary so the legal screen can join the browser without changing its UI.
+
 ## Shared project dependencies
 
 The following solution projects provide reusable functionality to tools and the future main game:
 
 - [`GameRuntime`](../GameRuntime/README.md) contains runtime-facing media functionality, currently cutscene playback. It is the shared API for playing a cutscene from an SDL renderer; future still-image loading and game state transitions can be added here as their interfaces are defined.
 - [`Configuration`](../Configuration/Configuration.vcxproj) loads shared application settings, including the location of extracted binaries.
+- [`GUI`](../GUI/README.md) supplies reusable SDL3 presentation primitives and 4K scaling for every tool.
 
 These libraries live beside `Tools` under the SpyHunter solution because they are consumed by both standalone utilities and the main game.
