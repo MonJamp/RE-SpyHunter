@@ -1,5 +1,9 @@
 # SpyHunter native reconstruction solution
 
+## Main game
+
+`RE-SpyHunter` is the main game executable project. The game's display name is `RE::SpyHunter`. Its C++20/SDL3 starter opens a resizable 1280 × 720 window, runs an event/render loop, and exits with Escape or window close. It does not yet load assets or reproduce game behavior. Build Debug or Release x64 and set this project as the Visual Studio startup project to run it.
+
 ## Shared configuration
 
 `Configuration` is a C++20 static-library project shared by the main reconstruction and focused test applications. It currently loads one required setting:
