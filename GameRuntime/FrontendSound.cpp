@@ -50,8 +50,8 @@ bool FrontendSound::loadAccept(const std::filesystem::path& audioPackage, std::s
     if (count == 0 || count > 4096 || 12ull + 12ull * count > fileSize) {
         error = "Invalid AUDIO.MPK directory."; return false;
     }
-    // The serialized directory label and embedded VAG label do not agree for this entry.
-    // Identify the sound by its original VAG header, which says FE_Confirm3.
+    // The original VAG header identifies FE_Confirm3. AUDIO.MPK's sequential
+    // name table also labels this entry sfx/FE_Confirm3.vag.
     std::array<unsigned char, 12> entry{};
     std::array<unsigned char, 48> header{};
     std::uint64_t dataOffset = 0;

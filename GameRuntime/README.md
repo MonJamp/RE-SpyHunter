@@ -25,6 +25,13 @@ in 64 KiB blocks without loading every resource body. Entry boundaries are
 inferred from the next validated header. `VkiImage.h` decodes standalone VKIs
 and supported VKI members read from a PCK.
 
+`AudioMpk.h` reads the `MPAK` directory and sequential name table without
+loading the 145 MB package. `AudioMpkPlayer.h` decodes selected PS2 VAG ADPCM
+and Paradigm MPC3 ADPCM entries and queues their native sample rate and channel
+count through SDL. It is an asset audition service; callers must separately
+apply the game's per-sound pitch, volume, pan and bus properties. The MPC3 step
+table is adapted from vgmstream under `VgmstreamLicense.txt`.
+
 ## Intended additions
 
 - Startup/frontend state coordination built from named states and transition

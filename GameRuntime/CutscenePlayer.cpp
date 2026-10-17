@@ -130,6 +130,8 @@ public:
     bool hasPendingSample = false;
     bool videoFinished = false;
     bool cropToPs2Display = false;
+    bool skipRequested = false;
+    std::chrono::steady_clock::time_point skipStart;
     bool pumpAudio(const int targetBytes, const std::uint64_t scanBudget, std::string& error)
     {
         int queued = SDL_GetAudioStreamQueued(audioStream);
@@ -246,6 +248,12 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
 void CutsceneSession::update()
 {
     if (!implementation_ || finished_ || !error_.empty()) return;
+    if (implementation_->skipRequested &&
+        std::chrono::steady_clock::now() - implementation_->skipStart >= std::chrono::milliseconds(250)) {
+        finished_ = true;
+        logging::write("GameRuntime", logging::Level::info, "movie_skip fade_complete");
+        return;
+    }
     if (!implementation_->pumpAudio(384 * 1024, 2 * 1024 * 1024, error_)) {
         logging::write("GameRuntime", logging::Level::error, error_);
         return;
@@ -306,6 +314,15 @@ void CutsceneSession::render(SDL_Renderer* renderer, const SDL_FRect& viewport) 
                                 viewport.y + (viewport.h - source.h * scale) * 0.5f,
                                 source.w * scale, source.h * scale};
     SDL_RenderTexture(renderer, implementation_->texture, &source, &destination);
+    if (implementation_->skipRequested) {
+        // vkMpeg2's default fade rate is 0.25 s; its display alpha falls toward black.
+        const auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - implementation_->skipStart).count();
+        const auto opacity = static_cast<Uint8>(255.0 * (std::clamp)(elapsed / 0.25, 0.0, 1.0));
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, opacity);
+        SDL_RenderFillRect(renderer, &viewport);
+    }
 }
 
 void CutsceneSession::stop()
@@ -323,9 +340,10 @@ void CutsceneSession::stop()
 
 void CutsceneSession::requestSkip()
 {
-    implementation_.reset();
-    error_.clear();
-    finished_ = true;
+    if (!implementation_ || implementation_->skipRequested || finished_) return;
+    implementation_->skipRequested = true;
+    implementation_->skipStart = std::chrono::steady_clock::now();
+    logging::write("GameRuntime", logging::Level::info, "movie_skip fade_started");
 }
 
 bool CutsceneSession::isPlaying() const { return implementation_ && !finished_ && error_.empty(); }

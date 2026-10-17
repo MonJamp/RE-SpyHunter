@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -123,6 +124,20 @@ int main(int argc, char** argv)
     }
     SDL_SetRenderLogicalPresentation(renderer, kLogicalWidth, kLogicalHeight, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
+    std::unordered_map<SDL_JoystickID, SDL_Gamepad*> gamepads;
+    const auto openGamepad = [&](SDL_JoystickID id) {
+        if (gamepads.contains(id) || !SDL_IsGamepad(id)) return;
+        if (SDL_Gamepad* pad = SDL_OpenGamepad(id)) {
+            gamepads.emplace(id, pad);
+            SDL_Log("Gamepad connected: %s", SDL_GetGamepadName(pad));
+        } else SDL_Log("Could not open gamepad: %s", SDL_GetError());
+    };
+    int gamepadCount = 0;
+    if (SDL_JoystickID* ids = SDL_GetGamepads(&gamepadCount)) {
+        for (int i = 0; i < gamepadCount; ++i) openGamepad(ids[i]);
+        SDL_free(ids);
+    }
+
     SDL_Texture* legalTexture = nullptr;
     SDL_Texture* logoTexture = nullptr;
     SDL_Texture* loadingTexture = nullptr;
@@ -171,42 +186,58 @@ int main(int argc, char** argv)
     double fadeDuration = 0.5;
     auto previous = SDL_GetTicksNS();
     bool running = true;
+    const auto acceptTitle = [&] {
+        if (state != IntroState::pressStart) return;
+        frontendSound.playAccept();
+        state = IntroState::startFade;
+        stateSeconds = 0.0;
+        fadeDuration = 0.5;
+        SDL_Log("Start pressed: fading toward MLOAD.VKI.");
+    };
+    const auto acceptAutosave = [&] {
+        if (state != IntroState::autosaveNotice) return;
+        frontendSound.playAccept();
+        state = IntroState::autosaveFade;
+        stateSeconds = 0.0;
+        fadeDuration = 0.25;
+    };
+    const auto skipMovie = [&] {
+        if (state == IntroState::movies || state == IntroState::attractMovie) movie.requestSkip();
+    };
 
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) running = false;
+            if (event.type == SDL_EVENT_GAMEPAD_ADDED) openGamepad(event.gdevice.which);
+            if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                if (const auto found = gamepads.find(event.gdevice.which); found != gamepads.end()) {
+                    SDL_CloseGamepad(found->second);
+                    gamepads.erase(found);
+                    SDL_Log("Gamepad disconnected.");
+                }
+            }
+            if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && gamepads.contains(event.gbutton.which)) {
+                if (event.gbutton.button == SDL_GAMEPAD_BUTTON_START) {
+                    if (state == IntroState::attractMovie) skipMovie();
+                    else acceptTitle();
+                } else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) {
+                    if (state == IntroState::autosaveNotice) acceptAutosave();
+                    else skipMovie();
+                }
+            }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                 if (event.key.key == SDLK_ESCAPE) running = false;
                 if (state == IntroState::pressStart &&
-                    (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE || event.key.key == SDLK_S)) {
-                    frontendSound.playAccept();
-                    state = IntroState::startFade;
-                    stateSeconds = 0.0;
-                    fadeDuration = 0.5;
-                    SDL_Log("Start pressed: fading toward MLOAD.VKI.");
-                }
+                    (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE || event.key.key == SDLK_S)) acceptTitle();
                 if ((state == IntroState::movies && event.key.key == SDLK_X) ||
                     (state == IntroState::attractMovie &&
-                     (event.key.key == SDLK_X || event.key.key == SDLK_RETURN))) {
-                    movie.requestSkip();
-                }
+                     (event.key.key == SDLK_X || event.key.key == SDLK_RETURN))) skipMovie();
                 if (state == IntroState::autosaveNotice &&
-                    (event.key.key == SDLK_X || event.key.key == SDLK_RETURN)) {
-                    frontendSound.playAccept();
-                    state = IntroState::autosaveFade;
-                    stateSeconds = 0.0;
-                    fadeDuration = 0.25;
-                }
+                    (event.key.key == SDLK_X || event.key.key == SDLK_RETURN)) acceptAutosave();
             }
             if (state == IntroState::pressStart && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                event.button.button == SDL_BUTTON_LEFT) {
-                frontendSound.playAccept();
-                state = IntroState::startFade;
-                stateSeconds = 0.0;
-                fadeDuration = 0.5;
-                SDL_Log("Start clicked: fading toward MLOAD.VKI.");
-            }
+                event.button.button == SDL_BUTTON_LEFT) acceptTitle();
         }
 
         const auto now = SDL_GetTicksNS();
@@ -293,6 +324,7 @@ int main(int argc, char** argv)
     }
 
     movie.stop();
+    for (auto& [id, pad] : gamepads) SDL_CloseGamepad(pad);
     if (legalTexture) SDL_DestroyTexture(legalTexture);
     if (logoTexture) SDL_DestroyTexture(logoTexture);
     if (loadingTexture) SDL_DestroyTexture(loadingTexture);

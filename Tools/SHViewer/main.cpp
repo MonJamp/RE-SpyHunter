@@ -4,6 +4,8 @@
 #include "../../Configuration/SpyHunterConfig.h"
 #include "../../Configuration/SpyHunterLog.h"
 #include "../../GameRuntime/CutscenePlayer.h"
+#include "../../GameRuntime/AudioMpk.h"
+#include "../../GameRuntime/AudioMpkPlayer.h"
 #include "../../GameRuntime/PckArchive.h"
 #include "../../GameRuntime/VkiImage.h"
 #include "../../GUI/Gui.h"
@@ -33,7 +35,7 @@ struct BrowserRow
     std::optional<size_t> memberIndex;
 };
 
-enum class BrowserFilter { all, vki, pss, pck };
+enum class BrowserFilter { all, vki, pss, pck, mpk };
 
 std::string lowercase(std::string value)
 {
@@ -79,12 +81,18 @@ SDL_Texture* createTexture(SDL_Renderer* renderer, const DecodedStill& still, st
 
 bool supported(const GameFile& file)
 {
-    return file.extension == ".vki" || file.extension == ".pss" || file.extension == ".pck";
+    return file.extension == ".vki" || file.extension == ".pss" || file.extension == ".pck" || file.extension == ".mpk";
 }
 
 bool supported(const spyhunter::runtime::PckEntry& entry)
 {
     return entry.type == "vkImage" && lowercase(std::filesystem::path(entry.name).extension().string()) == ".vki";
+}
+
+bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
+{
+    const auto extension = lowercase(std::filesystem::path(entry.name).extension().string());
+    return extension == ".vag" || extension == ".mc3";
 }
 }
 
@@ -108,7 +116,7 @@ int main(int argc, char* argv[])
 
     const auto gameFiles = findGameFiles(configResult.config->extractedBinariesPath);
     SDL_Log("Configuration: %s", configPath.string().c_str());
-    SDL_Log("Found %zu files under %s; viewing is supported for .VKI, .PSS, and .PCK.", gameFiles.size(),
+    SDL_Log("Found %zu files under %s; viewing is supported for .VKI, .PSS, .PCK, and .MPK.", gameFiles.size(),
             configResult.config->extractedBinariesPath.string().c_str());
     spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
                               "inventory files=" + std::to_string(gameFiles.size()) +
@@ -127,9 +135,6 @@ int main(int argc, char* argv[])
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
     }
 
-    const size_t vkiCount = static_cast<size_t>(std::count_if(gameFiles.begin(), gameFiles.end(), [](const GameFile& file) { return file.extension == ".vki"; }));
-    const size_t pssCount = static_cast<size_t>(std::count_if(gameFiles.begin(), gameFiles.end(), [](const GameFile& file) { return file.extension == ".pss"; }));
-    const size_t pckCount = static_cast<size_t>(std::count_if(gameFiles.begin(), gameFiles.end(), [](const GameFile& file) { return file.extension == ".pck"; }));
     BrowserFilter filter = BrowserFilter::all;
     std::vector<size_t> browserFiles;
     std::vector<BrowserRow> browserRows;
@@ -140,6 +145,8 @@ int main(int argc, char* argv[])
     int stillWidth = 0, stillHeight = 0;
     spyhunter::runtime::CutsceneSession cutscene;
     spyhunter::runtime::PckArchive archive;
+    spyhunter::runtime::AudioMpk audioArchive;
+    spyhunter::runtime::AudioMpkPlayer audioPlayer;
     std::optional<size_t> expandedFileIndex;
     std::string status = gameFiles.empty() ? "No files found in the configured game-files directory."
                                           : "Click a file or use Up/Down and Enter to view it.";
@@ -150,8 +157,13 @@ int main(int argc, char* argv[])
         for (const size_t fileIndex : browserFiles) {
             browserRows.push_back({fileIndex, std::nullopt});
             if (expandedFileIndex == fileIndex) {
-                for (size_t memberIndex = 0; memberIndex < archive.entries().size(); ++memberIndex)
-                    browserRows.push_back({fileIndex, memberIndex});
+                if (gameFiles[fileIndex].extension == ".mpk") {
+                    for (size_t memberIndex = 0; memberIndex < audioArchive.entries().size(); ++memberIndex)
+                        if (supported(audioArchive.entries()[memberIndex])) browserRows.push_back({fileIndex, memberIndex});
+                } else {
+                    for (size_t memberIndex = 0; memberIndex < archive.entries().size(); ++memberIndex)
+                        browserRows.push_back({fileIndex, memberIndex});
+                }
             }
         }
     };
@@ -163,13 +175,15 @@ int main(int argc, char* argv[])
             if (filter == BrowserFilter::all ||
                 (filter == BrowserFilter::vki && gameFiles[index].extension == ".vki") ||
                 (filter == BrowserFilter::pss && gameFiles[index].extension == ".pss") ||
-                (filter == BrowserFilter::pck && gameFiles[index].extension == ".pck")) browserFiles.push_back(index);
+                (filter == BrowserFilter::pck && gameFiles[index].extension == ".pck") ||
+                (filter == BrowserFilter::mpk && gameFiles[index].extension == ".mpk")) browserFiles.push_back(index);
         }
         rebuildRows();
         selectedIndex = firstVisibleIndex = 0;
         if (filter == BrowserFilter::vki) status = "Showing " + std::to_string(browserFiles.size()) + " VKI stills.";
         else if (filter == BrowserFilter::pss) status = "Showing " + std::to_string(browserFiles.size()) + " PSS cutscenes.";
         else if (filter == BrowserFilter::pck) status = "Showing " + std::to_string(browserFiles.size()) + " PCK archives.";
+        else if (filter == BrowserFilter::mpk) status = "Showing " + std::to_string(browserFiles.size()) + " MPK archives.";
         else status = "Showing all " + std::to_string(browserFiles.size()) + " game files.";
     };
     setFilter(BrowserFilter::all);
@@ -178,6 +192,7 @@ int main(int argc, char* argv[])
         if (browserRows.empty()) return;
         const BrowserRow row = browserRows[selectedIndex];
         cutscene.stop();
+        audioPlayer.stop();
         SDL_DestroyTexture(stillTexture);
         stillTexture = nullptr;
         stillWidth = stillHeight = 0;
@@ -185,6 +200,17 @@ int main(int argc, char* argv[])
         loadedMemberIndex = row.memberIndex;
         const GameFile& file = gameFiles[loadedIndex];
         if (row.memberIndex) {
+            if (file.extension == ".mpk") {
+                const auto& entry = audioArchive.entries()[*row.memberIndex];
+                spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
+                    "select audio=" + file.displayPath + "/" + entry.name);
+                std::vector<std::uint8_t> bytes;
+                std::string error, details;
+                if (!audioArchive.read(*row.memberIndex, bytes, error) ||
+                    !audioPlayer.play(bytes, details, error)) status = "Could not play " + entry.name + ": " + error;
+                else status = "Playing " + entry.name + " (" + details + ")";
+                return;
+            }
             const auto& entry = archive.entries()[*row.memberIndex];
             spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
                 "select member=" + file.displayPath + "/" + entry.name);
@@ -230,18 +256,23 @@ int main(int argc, char* argv[])
             const spyhunter::runtime::CutsceneOptions options{file.path, true};
             if (cutscene.load(renderer, options, error)) status = "Playing " + file.displayPath;
             else status = "Could not play PSS: " + error;
-        } else if (file.extension == ".pck") {
+        } else if (file.extension == ".pck" || file.extension == ".mpk") {
+            const bool isAudio = file.extension == ".mpk";
             if (expandedFileIndex == loadedIndex) {
                 expandedFileIndex.reset();
-                status = "PCK subtree collapsed.";
+                status = isAudio ? "MPK audio list collapsed." : "PCK subtree collapsed.";
             } else {
                 std::string error;
-                if (archive.open(file.path, error)) {
+                if (isAudio ? audioArchive.open(file.path, error) : archive.open(file.path, error)) {
                     expandedFileIndex = loadedIndex;
-                    status = std::to_string(archive.entries().size()) + " members. Select one in the subtree.";
+                    const auto count = isAudio
+                        ? std::count_if(audioArchive.entries().begin(), audioArchive.entries().end(),
+                            [](const spyhunter::runtime::AudioMpkEntry& entry) { return supported(entry); })
+                        : static_cast<long long>(archive.entries().size());
+                    status = std::to_string(count) + (isAudio ? " audio files. Select one to play." : " members. Select one in the subtree.");
                 } else {
                     expandedFileIndex.reset();
-                    status = "Could not open PCK: " + error;
+                    status = "Could not open archive: " + error;
                 }
             }
             rebuildRows();
@@ -251,7 +282,7 @@ int main(int argc, char* argv[])
                 }
         } else {
             const std::string extension = file.extension.empty() ? "(no extension)" : file.extension;
-            status = "Viewing " + extension + " files is not supported. Current viewers: .VKI, .PSS, .PCK.";
+            status = "Viewing " + extension + " files is not supported. Current viewers: .VKI, .PSS, .PCK, .MPK.";
         }
     };
 
@@ -269,12 +300,15 @@ int main(int argc, char* argv[])
             if (event.type == SDL_EVENT_QUIT) running = false;
             else if (event.type == SDL_EVENT_KEY_DOWN) {
                 if (event.key.key == SDLK_ESCAPE) {
-                    if (cutscene.isPlaying()) { cutscene.stop(); status = "Playback stopped."; }
+                    if (cutscene.isPlaying() || audioPlayer.isPlaying()) {
+                        cutscene.stop(); audioPlayer.stop(); status = "Playback stopped.";
+                    }
                     else running = false;
                 } else if (event.key.key == SDLK_1) setFilter(BrowserFilter::all);
                 else if (event.key.key == SDLK_2) setFilter(BrowserFilter::vki);
                 else if (event.key.key == SDLK_3) setFilter(BrowserFilter::pss);
                 else if (event.key.key == SDLK_4) setFilter(BrowserFilter::pck);
+                else if (event.key.key == SDLK_5) setFilter(BrowserFilter::mpk);
                 else if (!browserRows.empty() && event.key.key == SDLK_DOWN) {
                     selectedIndex = (std::min)(selectedIndex + 1, browserRows.size() - 1);
                 } else if (!browserRows.empty() && event.key.key == SDLK_UP) {
@@ -297,10 +331,11 @@ int main(int argc, char* argv[])
                 const float mouseX = event.button.x / spyhunter::gui::defaultUiScale - browserLeft;
                 const float mouseY = event.button.y / spyhunter::gui::defaultUiScale;
                 if (mouseY >= 52.0f && mouseY < 78.0f) {
-                    if (mouseX < 80.0f) setFilter(BrowserFilter::all);
-                    else if (mouseX < 158.0f) setFilter(BrowserFilter::vki);
-                    else if (mouseX < 236.0f) setFilter(BrowserFilter::pss);
-                    else setFilter(BrowserFilter::pck);
+                    if (mouseX < 68.0f) setFilter(BrowserFilter::all);
+                    else if (mouseX < 132.0f) setFilter(BrowserFilter::vki);
+                    else if (mouseX < 196.0f) setFilter(BrowserFilter::pss);
+                    else if (mouseX < 260.0f) setFilter(BrowserFilter::pck);
+                    else setFilter(BrowserFilter::mpk);
                 } else if (mouseY >= kBrowser.top) {
                     const size_t row = static_cast<size_t>((mouseY - kBrowser.top) / kBrowser.rowHeight);
                     const size_t index = firstVisibleIndex + row;
@@ -325,7 +360,8 @@ int main(int argc, char* argv[])
         if (loadedIndex < gameFiles.size()) {
             SDL_SetRenderDrawColor(renderer, 225, 232, 244, 255);
             std::string title = gameFiles[loadedIndex].displayPath;
-            if (loadedMemberIndex) title += " / " + archive.entries()[*loadedMemberIndex].name;
+            if (loadedMemberIndex) title += " / " + (gameFiles[loadedIndex].extension == ".mpk"
+                ? audioArchive.entries()[*loadedMemberIndex].name : archive.entries()[*loadedMemberIndex].name);
             spyhunter::gui::text(renderer, 24.0f, 20.0f, spyhunter::gui::shorten(title, 100));
             SDL_SetRenderDrawColor(renderer, 170, 180, 195, 255);
             spyhunter::gui::text(renderer, 24.0f, 42.0f, spyhunter::gui::shorten(status, 100));
@@ -342,7 +378,8 @@ int main(int argc, char* argv[])
             SDL_RenderTexture(renderer, stillTexture, nullptr, &destination);
         } else if (!loadedMemberIndex && expandedFileIndex == loadedIndex) {
             SDL_SetRenderDrawColor(renderer, 175, 190, 215, 255);
-            spyhunter::gui::text(renderer, 24.0f, 78.0f, "Select a member from the expanded PCK subtree.");
+            spyhunter::gui::text(renderer, 24.0f, 78.0f, gameFiles[loadedIndex].extension == ".mpk"
+                ? "Select an audio file to play it." : "Select a member from the expanded PCK subtree.");
         }
 
         spyhunter::gui::panel(renderer, browserRect, SDL_Color{27, 31, 42, 255});
@@ -353,13 +390,15 @@ int main(int argc, char* argv[])
         SDL_SetRenderDrawColor(renderer, 160, 170, 190, 255);
         spyhunter::gui::text(renderer, browserLeft + 16.0f, 36.0f, std::to_string(browserFiles.size()) + " shown / " + std::to_string(gameFiles.size()) + " game files");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::all ? 255 : 155, filter == BrowserFilter::all ? 255 : 170, filter == BrowserFilter::all ? 255 : 190, 255);
-        spyhunter::gui::text(renderer, browserLeft + 12.0f, 58.0f, "ALL [1] " + std::to_string(gameFiles.size()));
+        spyhunter::gui::text(renderer, browserLeft + 12.0f, 58.0f, "ALL [1]");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::vki ? 255 : 155, filter == BrowserFilter::vki ? 255 : 170, filter == BrowserFilter::vki ? 255 : 190, 255);
-        spyhunter::gui::text(renderer, browserLeft + 88.0f, 58.0f, "VKI [2] " + std::to_string(vkiCount));
+        spyhunter::gui::text(renderer, browserLeft + 76.0f, 58.0f, "VKI [2]");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::pss ? 255 : 155, filter == BrowserFilter::pss ? 255 : 170, filter == BrowserFilter::pss ? 255 : 190, 255);
-        spyhunter::gui::text(renderer, browserLeft + 166.0f, 58.0f, "PSS [3] " + std::to_string(pssCount));
+        spyhunter::gui::text(renderer, browserLeft + 140.0f, 58.0f, "PSS [3]");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::pck ? 255 : 155, filter == BrowserFilter::pck ? 255 : 170, filter == BrowserFilter::pck ? 255 : 190, 255);
-        spyhunter::gui::text(renderer, browserLeft + 244.0f, 58.0f, "PCK [4] " + std::to_string(pckCount));
+        spyhunter::gui::text(renderer, browserLeft + 204.0f, 58.0f, "PCK [4]");
+        SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::mpk ? 255 : 155, filter == BrowserFilter::mpk ? 255 : 170, filter == BrowserFilter::mpk ? 255 : 190, 255);
+        spyhunter::gui::text(renderer, browserLeft + 268.0f, 58.0f, "MPK [5]");
         for (size_t row = 0; row < visibleRows && firstVisibleIndex + row < browserRows.size(); ++row) {
             const size_t index = firstVisibleIndex + row;
             const BrowserRow& browserRow = browserRows[index];
@@ -369,27 +408,34 @@ int main(int argc, char* argv[])
             if (index == selectedIndex) {
                 spyhunter::gui::panel(renderer, rowRect, SDL_Color{57, 95, 152, 255});
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-            } else if (browserRow.memberIndex ? supported(archive.entries()[*browserRow.memberIndex]) : supported(file))
+            } else if (browserRow.memberIndex ? (file.extension == ".mpk"
+                ? supported(audioArchive.entries()[*browserRow.memberIndex])
+                : supported(archive.entries()[*browserRow.memberIndex])) : supported(file))
                 SDL_SetRenderDrawColor(renderer, 210, 218, 230, 255);
             else SDL_SetRenderDrawColor(renderer, 115, 124, 140, 255);
             std::string label;
             if (browserRow.memberIndex) {
-                const auto& entry = archive.entries()[*browserRow.memberIndex];
-                label = "    " + entry.name + (supported(entry) ? "" : "  [unsupported]");
+                if (file.extension == ".mpk") label = "    " + audioArchive.entries()[*browserRow.memberIndex].name;
+                else {
+                    const auto& entry = archive.entries()[*browserRow.memberIndex];
+                    label = "    " + entry.name + (supported(entry) ? "" : "  [unsupported]");
+                }
             } else {
-                label = (file.extension == ".pck" ? (expandedFileIndex == browserRow.fileIndex ? "[-] " : "[+] ") : "") +
+                label = ((file.extension == ".pck" || file.extension == ".mpk") ?
+                    (expandedFileIndex == browserRow.fileIndex ? "[-] " : "[+] ") : "") +
                     file.displayPath + (supported(file) ? "" : "  [unsupported]");
             }
             spyhunter::gui::text(renderer, rowRect.x + 6.0f, rowRect.y + 4.0f, spyhunter::gui::shorten(label, 43));
         }
         SDL_SetRenderDrawColor(renderer, 180, 190, 205, 255);
-        spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 48.0f, "Click / Enter: view | Wheel / arrows: browse");
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 48.0f, "Click / Enter: view or play | Esc: stop");
         spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 28.0f, spyhunter::gui::shorten(status, 44));
         SDL_RenderPresent(renderer);
         SDL_Delay(1);
     }
 
     cutscene.stop();
+    audioPlayer.stop();
     SDL_DestroyTexture(stillTexture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

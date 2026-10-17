@@ -7,6 +7,10 @@
     <ClCompile Include="PssAudioReader.cpp" />
     <ClInclude Include="PckArchive.h" />
     <ClCompile Include="PckArchive.cpp" />
+    <ClInclude Include="AudioMpk.h" />
+    <ClCompile Include="AudioMpk.cpp" />
+    <ClInclude Include="AudioMpkPlayer.h" />
+    <ClCompile Include="AudioMpkPlayer.cpp" />
     <ClInclude Include="VkiImage.h" />
     <ClInclude Include="Ps2DevConsoleFont.h" />
     <ClInclude Include="FrontendSound.h" />

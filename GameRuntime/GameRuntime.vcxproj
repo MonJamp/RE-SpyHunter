@@ -36,8 +36,8 @@
       <PreprocessorDefinitions Condition="'$(Configuration)'=='Release'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
-  <ItemGroup><ClInclude Include="CutscenePlayer.h" /><ClInclude Include="PssAudioReader.h" /><ClInclude Include="PckArchive.h" /><ClInclude Include="VkiImage.h" /><ClInclude Include="VkfTextureFont.h" /><ClInclude Include="Ps2DevConsoleFont.h" /><ClInclude Include="FrontendSound.h" /></ItemGroup>
-  <ItemGroup><ClCompile Include="CutscenePlayer.cpp" /><ClCompile Include="PssAudioReader.cpp" /><ClCompile Include="PckArchive.cpp" /><ClCompile Include="VkiImage.cpp" /><ClCompile Include="VkfTextureFont.cpp" /><ClCompile Include="Ps2DevConsoleFont.cpp" /><ClCompile Include="FrontendSound.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="CutscenePlayer.h" /><ClInclude Include="PssAudioReader.h" /><ClInclude Include="PckArchive.h" /><ClInclude Include="AudioMpk.h" /><ClInclude Include="AudioMpkPlayer.h" /><ClInclude Include="VkiImage.h" /><ClInclude Include="VkfTextureFont.h" /><ClInclude Include="Ps2DevConsoleFont.h" /><ClInclude Include="FrontendSound.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="CutscenePlayer.cpp" /><ClCompile Include="PssAudioReader.cpp" /><ClCompile Include="PckArchive.cpp" /><ClCompile Include="AudioMpk.cpp" /><ClCompile Include="AudioMpkPlayer.cpp" /><ClCompile Include="VkiImage.cpp" /><ClCompile Include="VkfTextureFont.cpp" /><ClCompile Include="Ps2DevConsoleFont.cpp" /><ClCompile Include="FrontendSound.cpp" /></ItemGroup>
   <ItemGroup><ProjectReference Include="..\Configuration\Configuration.vcxproj"><Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project></ProjectReference></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="ValidateSDL3Root" BeforeTargets="PrepareForBuild" Condition="'$(Platform)'=='x64'">
