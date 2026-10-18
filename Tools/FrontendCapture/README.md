@@ -2,7 +2,7 @@
 
 This command-line inspection tool renders the real `FrontendMenu` with an SDL software renderer and saves only the requested pixels. It is separate from `FrontendMenuSmoke`, which checks behavior. The output is a BMP at native 640 × 448 logical resolution or a smaller crop; no image upscaling is applied. Cropping before saving makes visual inspection cheaper in image tokens and disk space.
 
-Options are parsed by the vendored, header-only [CLI11](https://github.com/CLIUtils/CLI11) v2.7.2 library. Its single header and MIT license are kept in `third_party/CLI11`, so building this tool does not require package restore or a network connection. The official `v2.7.2` release header SHA-256 is `FFA9A30DA295C5858FB5F91F9F45771BAB09471D7010A34C7C68C857A330DD76`; the bundled license SHA-256 is `CFC76368AEF8F51868FA1CDA6BCFA26E583406A4CF8E48E725E7624DF24D8855`. `--help` prints generated usage and option descriptions.
+Options are parsed by the shared, header-only [CLI11](https://github.com/CLIUtils/CLI11) v2.7.2 library. Its single header and MIT license are in [`ThirdParty/CLI11`](../../ThirdParty/README.md), so building this tool does not require package restore or a network connection. `--help` prints generated usage and option descriptions.
 
 Build `FrontendCapture.vcxproj` with x64 MSBuild, or build the solution. From the solution directory:
 

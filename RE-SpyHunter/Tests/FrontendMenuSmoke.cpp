@@ -1,4 +1,5 @@
 #include "../FrontendMenu.h"
+#include "../../ThirdParty/CLI11/CLI11.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -44,7 +45,20 @@ std::uint64_t frameHash(SDL_Renderer* renderer)
 
 int main(int argc, char** argv)
 {
-    if (argc < 2 || argc > 3) { std::cerr << "Expected extracted-binaries root and optional converted MBACK.mp4.\n"; return 2; }
+    std::string assetsArgument;
+    std::string backgroundArgument;
+    CLI::App commandLine{"Run frontend-menu behavior checks using extracted game assets."};
+    commandLine.add_option("assets", assetsArgument, "Extracted-binaries root")->required();
+    commandLine.add_option("background", backgroundArgument, "Optional converted MBACK.mp4 path");
+    argv = commandLine.ensure_utf8(argv);
+    try {
+        commandLine.parse(argc, argv);
+    } catch (const CLI::ParseError& error) {
+        return commandLine.exit(error) == 0 ? 0 : 2;
+    }
+    const auto assetsPath = std::filesystem::path(std::u8string(assetsArgument.begin(), assetsArgument.end()));
+    const auto backgroundPath = backgroundArgument.empty() ? std::filesystem::path{} :
+        std::filesystem::path(std::u8string(backgroundArgument.begin(), backgroundArgument.end()));
     if (!SDL_Init(SDL_INIT_VIDEO)) { std::cerr << SDL_GetError() << '\n'; return 1; }
     struct Quit { ~Quit() { SDL_Quit(); } } quit;
     using Window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>;
@@ -57,8 +71,7 @@ int main(int argc, char** argv)
     std::filesystem::remove(profilePath);
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); } } cleanup{profilePath};
     std::string error;
-    const std::filesystem::path backgroundPath = argc >= 3 ? argv[2] : "";
-    spyhunter::game::FrontendMenu menu(renderer.get(), argv[1], profilePath, backgroundPath);
+    spyhunter::game::FrontendMenu menu(renderer.get(), assetsPath, profilePath, backgroundPath);
     if (!menu.load(error)) { std::cerr << error << '\n'; return 1; }
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::profileSelect, "Did not start at profile select.")) return 1;
     for (int frame = 0; frame < 30; ++frame) { menu.update(); SDL_Delay(10); }
@@ -93,7 +106,7 @@ int main(int argc, char** argv)
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::mainMenu,
                  "Existing profile did not re-enter main menu after Back.")) return 1;
 
-    spyhunter::game::FrontendMenu reloaded(renderer.get(), argv[1], profilePath, {});
+    spyhunter::game::FrontendMenu reloaded(renderer.get(), assetsPath, profilePath, {});
     if (!reloaded.load(error) || !require(reloaded.profiles()[0] == "SPY1", "Profile did not persist.")) {
         if (!error.empty()) std::cerr << error << '\n';
         return 1;

@@ -2,6 +2,7 @@
 #include "../IntroSequence.h"
 #include "../../GameRuntime/PckArchive.h"
 #include "../../GameRuntime/GamepadSet.h"
+#include "../../ThirdParty/CLI11/CLI11.hpp"
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -118,7 +119,16 @@ void run(SDL_Renderer* renderer, const std::filesystem::path& root)
 
 int main(int argc, char** argv)
 {
-    if (argc != 2) { std::cerr << "Usage: IntroSequenceSmoke <extracted-binaries-root>\n"; return 2; }
+    std::string assetsArgument;
+    CLI::App commandLine{"Run intro-sequence behavior checks using extracted game assets."};
+    commandLine.add_option("assets", assetsArgument, "Extracted-binaries root")->required();
+    argv = commandLine.ensure_utf8(argv);
+    try {
+        commandLine.parse(argc, argv);
+    } catch (const CLI::ParseError& error) {
+        return commandLine.exit(error) == 0 ? 0 : 2;
+    }
+    const auto assetsPath = std::filesystem::path(std::u8string(assetsArgument.begin(), assetsArgument.end()));
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) return 1;
@@ -130,7 +140,7 @@ int main(int argc, char** argv)
             window ? SDL_CreateRenderer(window.get(), "software") : nullptr, SDL_DestroyRenderer);
         try {
             require(renderer != nullptr, SDL_GetError());
-            run(renderer.get(), argv[1]);
+            run(renderer.get(), assetsPath);
             std::cout << "PASS: still loading, failure cleanup, autosave branches, fades/clamps, movie skips, attract return, menu endpoint\n";
         } catch (const std::exception& error) {
             std::cerr << "FAIL: " << error.what() << '\n';

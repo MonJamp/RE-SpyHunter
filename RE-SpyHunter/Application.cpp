@@ -3,6 +3,7 @@
 #include "IntroSequence.h"
 #include "../Configuration/SpyHunterConfig.h"
 #include "../GameRuntime/GamepadSet.h"
+#include "../ThirdParty/CLI11/CLI11.hpp"
 #include <memory>
 
 namespace spyhunter::game
@@ -23,8 +24,22 @@ int showError(const char* title, const std::string& error, SDL_Window* window = 
 
 int runApplication(int argc, char** argv)
 {
-    const auto configPath = argc > 1 ? std::filesystem::path(argv[1])
-        : configuration::findConfigFile(std::filesystem::current_path());
+    std::string configArgument;
+    CLI::App commandLine{"Run the SpyHunter frontend reconstruction."};
+    commandLine.add_option("config", configArgument, "Optional SpyHunter.config path");
+    argv = commandLine.ensure_utf8(argv);
+    try {
+        commandLine.parse(argc, argv);
+    } catch (const CLI::ParseError& error) {
+        const bool requestedHelp = error.get_exit_code() == static_cast<int>(CLI::ExitCodes::Success);
+        SDL_ShowSimpleMessageBox(requestedHelp ? SDL_MESSAGEBOX_INFORMATION : SDL_MESSAGEBOX_ERROR,
+                                 "RE::SpyHunter command line",
+                                 requestedHelp ? commandLine.help().c_str() : error.what(), nullptr);
+        return requestedHelp ? 0 : 2;
+    }
+    const auto configPath = configArgument.empty()
+        ? configuration::findConfigFile(std::filesystem::current_path())
+        : std::filesystem::path(std::u8string(configArgument.begin(), configArgument.end()));
     const auto result = configuration::load(configPath);
     if (!result.config) return showError("RE::SpyHunter configuration", result.error);
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))

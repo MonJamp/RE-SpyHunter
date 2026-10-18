@@ -1,5 +1,5 @@
 #include "../../RE-SpyHunter/FrontendMenu.h"
-#include "third_party/CLI11/CLI11.hpp"
+#include "../../ThirdParty/CLI11/CLI11.hpp"
 
 #include <chrono>
 #include <filesystem>

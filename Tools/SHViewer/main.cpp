@@ -9,6 +9,7 @@
 #include "../../GameRuntime/PckArchive.h"
 #include "../../GameRuntime/VkiImage.h"
 #include "../../GUI/Gui.h"
+#include "../../ThirdParty/CLI11/CLI11.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -98,9 +99,22 @@ bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
 
 int main(int argc, char* argv[])
 {
-    const std::filesystem::path configPath = argc > 1
-        ? std::filesystem::path(argv[1])
-        : spyhunter::configuration::findConfigFile(std::filesystem::current_path());
+    std::string configArgument;
+    CLI::App commandLine{"Browse and preview extracted SpyHunter game files."};
+    commandLine.add_option("config", configArgument, "Optional SpyHunter.config path");
+    argv = commandLine.ensure_utf8(argv);
+    try {
+        commandLine.parse(argc, argv);
+    } catch (const CLI::ParseError& error) {
+        const bool requestedHelp = error.get_exit_code() == static_cast<int>(CLI::ExitCodes::Success);
+        SDL_ShowSimpleMessageBox(requestedHelp ? SDL_MESSAGEBOX_INFORMATION : SDL_MESSAGEBOX_ERROR,
+                                 "SH Viewer command line",
+                                 requestedHelp ? commandLine.help().c_str() : error.what(), nullptr);
+        return requestedHelp ? 0 : 2;
+    }
+    const auto configPath = configArgument.empty()
+        ? spyhunter::configuration::findConfigFile(std::filesystem::current_path())
+        : std::filesystem::path(std::u8string(configArgument.begin(), configArgument.end()));
     const auto configResult = spyhunter::configuration::load(configPath);
     if (!configResult.config) {
         SDL_Log("Configuration error: %s", configResult.error.c_str());

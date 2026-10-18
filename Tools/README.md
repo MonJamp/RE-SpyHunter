@@ -14,7 +14,7 @@ The viewer uses the shared configuration and GUI libraries, its VKI decoder, and
 
 MPK playback is a raw asset audition at header rate and unity gain. In-game effect pitch, volume, pan, bus and priority depend on the individual sound call. For example, the title accept sound uses 0.8 pitch and 0.5 volume in-game; SH Viewer intentionally plays the archived VAG at its native 44.1 kHz for inspection. MPC3 decoding uses the step-size table adapted from [vgmstream](https://github.com/vgmstream/vgmstream/blob/master/src/coding/mpc3_decoder.c) under the notice in `GameRuntime/VgmstreamLicense.txt`.
 
-Pass a `SpyHunter.config` path as the first argument, or let the viewer search upward from its working directory. PSS playback uses a file-backed Media Foundation byte stream and incremental PCM reading, without copying the movie. Input game files remain read-only. Set `Log.SHViewer` and `Log.GameRuntime` independently in the config to inspect navigation and playback in the tab-delimited `LogFilePath` file. See [building and configuration](../BUILDING.md) for setup and log levels.
+Pass a `SpyHunter.config` path as the optional positional argument, or let the viewer search upward from its working directory. CLI11 validates the command line; use `--help` for the generated usage. PSS playback uses a file-backed Media Foundation byte stream and incremental PCM reading, without copying the movie. Input game files remain read-only. Set `Log.SHViewer` and `Log.GameRuntime` independently in the config to inspect navigation and playback in the tab-delimited `LogFilePath` file. See [building and configuration](../BUILDING.md) for setup and log levels.
 
 ## Shared project dependencies
 
