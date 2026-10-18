@@ -34,7 +34,9 @@ and supported VKI members read from a PCK.
 `PackedTexture` decodes the observed 3.0.85 PSMT8 `vkDMATexture` layout used by
 the 32 × 32 PlayStation navigation icons in `SYSTEM.PCK`. It reads only the
 selected archive member, uploads its first mip level, and leaves menu placement
-and meaning to the caller.
+and meaning to the caller. The native RGBA upload reverses raster row order to
+map the PS2 texture orientation to SDL's top-down texture rows; the Triangle
+icon now points upward as in the supplied PCSX2 frontend capture.
 
 `AudioMpk.h` reads the `MPAK` directory and sequential name table without
 loading the 145 MB package. `AudioMpkPlayer.h` opens selected PS2 VAG ADPCM

@@ -77,7 +77,11 @@ bool PackedTexture::load(const std::filesystem::path& archivePath, const std::st
         const std::size_t paletteIndex = (color & ~std::size_t{0x18}) |
                                          ((color & 0x08) << 1) | ((color & 0x10) >> 1);
         const std::size_t source = palette + paletteIndex * 4;
-        const std::size_t target = index * 4;
+        // vkDMATexture's PSMT8 rows arrive in PS2 bottom-up texture order;
+        // SDL's uploaded RGBA rows are top-down. Reverse rows for display.
+        const std::size_t y = index / width;
+        const std::size_t x = index % width;
+        const std::size_t target = ((height - 1 - y) * width + x) * 4;
         rgba[target] = bytes[source];
         rgba[target + 1] = bytes[source + 1];
         rgba[target + 2] = bytes[source + 2];
