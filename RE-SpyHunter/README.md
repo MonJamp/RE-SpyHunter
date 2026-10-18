@@ -1,5 +1,10 @@
 # Main game structure
 
+The source-derived [frontend menu requirements](../docs/frontend-menu-requirements.md)
+document the original hierarchy, navigation and selection commands. The current
+native child tree still contains placeholders and differs from that baseline;
+use the requirements document for subsequent behavior reconstruction.
+
 - `main.cpp`: SDL entry point only.
 - `Application`: configuration, SDL/window/renderer lifetime, controller discovery, event pump and frame clock. Releases game resources before renderer/window/SDL, including failure exits.
 - `IntroSequence`: game-specific startup assets, input policy, state transitions and presentation. `load`, `handleEvent`, `update(deltaSeconds)`, `render` separate lifecycle phases. It retains the recovered constants and existing host approximations through `readyForMenu()` at MLOAD.
