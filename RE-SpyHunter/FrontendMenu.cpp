@@ -2,6 +2,7 @@
 #include "../GameUI/MenuDrawing.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <fstream>
 #include <optional>
@@ -14,8 +15,14 @@ namespace
 constexpr float canvasWidth = 640.0f;
 constexpr float canvasHeight = 448.0f;
 constexpr std::array<std::string_view, 4> mainItems{
-    "OPERATIONS", "TWO PLAYER", "SYSTEM OPTIONS", "DOSSIER"
+    "OPERATIONS", "TWO - PLAYER", "SYSTEM OPTIONS", "DOSSIER"
 };
+// Original float bits from color initialization at SLUS_200.56 VA 0x0019AF08.
+constexpr SDL_Color sourceColor(std::uint32_t r, std::uint32_t g, std::uint32_t b, std::uint32_t a)
+{
+    const auto byte = [](std::uint32_t bits) { return static_cast<Uint8>(std::bit_cast<float>(bits) * 255.0f + 0.5f); };
+    return {byte(r), byte(g), byte(b), byte(a)};
+}
 constexpr std::array<SDL_FRect, 4> mainSelectorBounds{{
     {180.0f, 148.0f, 285.0f, 30.0f},
     {170.0f, 188.0f, 300.0f, 30.0f},
@@ -107,7 +114,7 @@ bool FrontendMenu::load(std::string& error)
         return false;
     if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
         return false;
-    if (!menuHighlightBar_.load(root_ / "DATA" / "MENU.PCK", "menu_highlightbar.rgba", renderer_, error))
+    if (!menuLightbar_.load(root_ / "DATA" / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
         return false;
     const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
     if (!navIcon_.load(systemArchive, "menu_buttons_nav_all.rgba", renderer_, error) ||
@@ -326,8 +333,9 @@ void FrontendMenu::render() const
         drawCentered("X/ENTER  ACCEPT", 62.0f, 0.65f);
     } else if (screen_ == Screen::mainMenu) {
         const SDL_Color blue{50, 54, 105, 255};
-        const SDL_Color selected{92, 129, 239, 255};
-        const SDL_Color unselected{2, 34, 68, 255};
+        constexpr auto selected = sourceColor(0x3ecf0069, 0x3f0c8b44, 0x3f800000, 0x3f666666);
+        constexpr auto unselected = sourceColor(0, 0x3d1ba5e3, 0x3e0d4fdf, 0x3f3f3b64);
+        constexpr auto selectorTint = sourceColor(0x3e88a71e, 0x3ef97247, 0x3f800000, 0x3f400000);
         const SDL_Color gray{170, 176, 192, 255};
         const SDL_Color metadataWhite{170, 176, 192, 255};
         const SDL_Color titleBlue{32, 125, 205, 255};
@@ -340,14 +348,7 @@ void FrontendMenu::render() const
         constexpr std::array<SDL_FPoint, 4> anchors{{{260, 280}, {250, 240}, {240, 195}, {280, 150}}};
         for (std::size_t index = 0; index < mainItems.size(); ++index) {
             if (index == mainSelection_.index()) {
-                const auto& original = mainSelectorBounds[index];
-                const float textWidth = font_.textAdvance(mainItems[index], 1.0f);
-                const float width = textWidth + 51.0f;
-                const float center = original.x + original.w * 0.5f;
-                const SDL_FRect bounds{center - width * 0.5f, original.y + 4.0f, width, 22.0f};
-                ui::drawGradientPillSelector(renderer_, bounds, {18, 46, 93, 255}, {29, 71, 138, 255});
-                menuHighlightBar_.drawRounded(renderer_, bounds);
-                ui::drawPillOutline(renderer_, bounds, {32, 84, 146, 200});
+                menuLightbar_.drawTinted(renderer_, mainSelectorBounds[index], selectorTint);
             }
             font_.drawText(renderer_, mainItems[index], anchors[index].x, anchors[index].y,
                            canvasHeight, 1.0f, index == mainSelection_.index() ? selected : unselected);

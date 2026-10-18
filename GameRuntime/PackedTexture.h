@@ -21,6 +21,7 @@ public:
     void unload();
     void draw(SDL_Renderer* renderer, float x, float y, float width = 0, float height = 0) const;
     void drawRounded(SDL_Renderer* renderer, const SDL_FRect& bounds) const;
+    void drawTinted(SDL_Renderer* renderer, const SDL_FRect& bounds, SDL_Color color) const;
     int width() const { return width_; }
     int height() const { return height_; }
 

@@ -72,6 +72,16 @@ void PackedTexture::draw(SDL_Renderer* renderer, const float x, const float y, f
     SDL_RenderTexture(renderer, texture_, nullptr, &destination);
 }
 
+void PackedTexture::drawTinted(SDL_Renderer* renderer, const SDL_FRect& bounds, SDL_Color color) const
+{
+    if (!texture_) return;
+    SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
+    SDL_SetTextureAlphaMod(texture_, color.a);
+    SDL_RenderTexture(renderer, texture_, nullptr, &bounds);
+    SDL_SetTextureColorMod(texture_, 255, 255, 255);
+    SDL_SetTextureAlphaMod(texture_, 255);
+}
+
 void PackedTexture::drawRounded(SDL_Renderer* renderer, const SDL_FRect& bounds) const
 {
     if (!texture_ || bounds.w <= 0.0f || bounds.h <= 0.0f) return;
