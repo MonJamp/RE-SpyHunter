@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <optional>
+#include <span>
 
 namespace spyhunter::game
 {
@@ -14,6 +16,63 @@ constexpr float canvasHeight = 448.0f;
 constexpr std::array<std::string_view, 4> mainItems{
     "OPERATIONS", "TWO PLAYER", "SYSTEM OPTIONS", "DOSSIER"
 };
+
+struct MenuNode {
+    FrontendMenu::Screen screen;
+    std::string_view title;
+    std::span<const std::string_view> labels;
+    std::span<const FrontendMenu::Screen> destinations;
+};
+
+constexpr std::array<std::string_view, 2> operationsLabels{"MISSION SELECT", "RENDEZVOUS"};
+constexpr std::array<FrontendMenu::Screen, 2> operationsDestinations{
+    FrontendMenu::Screen::missionSelect, FrontendMenu::Screen::rendezvous};
+constexpr std::array<std::string_view, 2> twoPlayerLabels{"PLAYER 1", "PLAYER 2"};
+constexpr std::array<FrontendMenu::Screen, 0> noDestinations{};
+constexpr std::array<FrontendMenu::Screen, 0> twoPlayerDestinations{};
+constexpr std::array<std::string_view, 2> systemOptionsLabels{"SETTINGS", "CONTROLLER"};
+constexpr std::array<FrontendMenu::Screen, 2> systemOptionsDestinations{
+    FrontendMenu::Screen::settings, FrontendMenu::Screen::controller};
+constexpr std::array<std::string_view, 2> dossierLabels{"EXTRAS", "MISSION DATA"};
+constexpr std::array<FrontendMenu::Screen, 2> dossierDestinations{
+    FrontendMenu::Screen::extras, FrontendMenu::Screen::missionData};
+constexpr std::array<std::string_view, 3> extrasLabels{"MUSIC PLAYER", "MOVIE PLAYER", "CHEAT GRID"};
+constexpr std::array<FrontendMenu::Screen, 3> extrasDestinations{
+    FrontendMenu::Screen::musicPlayer, FrontendMenu::Screen::moviePlayer, FrontendMenu::Screen::cheatGrid};
+constexpr std::array<std::string_view, 2> controllerLabels{"CONTROLLER 1 OPTIONS", "CONTROLLER 2 OPTIONS"};
+constexpr std::array<FrontendMenu::Screen, 2> controllerDestinations{
+    FrontendMenu::Screen::controller1Options, FrontendMenu::Screen::controller2Options};
+constexpr std::array<std::string_view, 3> controllerOptionsLabels{"STANDARD", "REVERSED", "FLIPPED"};
+constexpr std::array<std::string_view, 1> missionSelectLabels{"MISSION SELECT"};
+constexpr std::array<std::string_view, 1> rendezvousLabels{"RENDEZVOUS"};
+constexpr std::array<std::string_view, 1> settingsLabels{"SETTINGS"};
+constexpr std::array<std::string_view, 1> missionDataLabels{"MISSION DATA"};
+constexpr std::array<std::string_view, 1> musicPlayerLabels{"MUSIC PLAYER"};
+constexpr std::array<std::string_view, 1> moviePlayerLabels{"MOVIE PLAYER"};
+constexpr std::array<std::string_view, 1> cheatGridLabels{"CHEAT GRID"};
+
+std::optional<MenuNode> menuNode(const FrontendMenu::Screen screen)
+{
+    using Screen = FrontendMenu::Screen;
+    switch (screen) {
+    case Screen::operations: return MenuNode{screen, "OPERATIONS", operationsLabels, operationsDestinations};
+    case Screen::twoPlayer: return MenuNode{screen, "TWO PLAYER", twoPlayerLabels, twoPlayerDestinations};
+    case Screen::systemOptions: return MenuNode{screen, "SYSTEM OPTIONS", systemOptionsLabels, systemOptionsDestinations};
+    case Screen::dossier: return MenuNode{screen, "DOSSIER", dossierLabels, dossierDestinations};
+    case Screen::extras: return MenuNode{screen, "EXTRAS", extrasLabels, extrasDestinations};
+    case Screen::controller: return MenuNode{screen, "CONTROLLER", controllerLabels, controllerDestinations};
+    case Screen::controller1Options: case Screen::controller2Options:
+        return MenuNode{screen, "CONTROLLER OPTIONS", controllerOptionsLabels, noDestinations};
+    case Screen::missionSelect: return MenuNode{screen, "MISSION SELECT", missionSelectLabels, noDestinations};
+    case Screen::rendezvous: return MenuNode{screen, "RENDEZVOUS", rendezvousLabels, noDestinations};
+    case Screen::settings: return MenuNode{screen, "SETTINGS", settingsLabels, noDestinations};
+    case Screen::missionData: return MenuNode{screen, "MISSION DATA", missionDataLabels, noDestinations};
+    case Screen::musicPlayer: return MenuNode{screen, "MUSIC PLAYER", musicPlayerLabels, noDestinations};
+    case Screen::moviePlayer: return MenuNode{screen, "MOVIE PLAYER", moviePlayerLabels, noDestinations};
+    case Screen::cheatGrid: return MenuNode{screen, "CHEAT GRID", cheatGridLabels, noDestinations};
+    default: return std::nullopt;
+    }
+}
 
 bool isAccept(const SDL_Event& event)
 {
@@ -75,7 +134,12 @@ void FrontendMenu::moveSelection(const int direction)
 {
     if (screen_ == Screen::profileSelect) {
         profileSelection_.move(direction);
-    } else if (screen_ == Screen::mainMenu) {
+    } else if (screen_ == Screen::mainMenu || menuNode(screen_)) {
+        if (screen_ != Screen::mainMenu) {
+            submenuSelection_.move(direction);
+            status_.clear();
+            return;
+        }
         mainSelection_.move(direction);
         status_.clear();
     }
@@ -123,14 +187,58 @@ void FrontendMenu::accept()
         screen_ = Screen::mainMenu;
         return;
     }
-    status_ = std::string(mainItems[mainSelection_.index()]) + " IS NOT YET AVAILABLE";
+    Screen destination;
+    switch (mainSelection_.index()) {
+    case 0: destination = Screen::operations; break;
+    case 1: destination = Screen::twoPlayer; break;
+    case 2: destination = Screen::systemOptions; break;
+    case 3: destination = Screen::dossier; break;
+    default: return;
+    }
+    if (screen_ != Screen::mainMenu) {
+        if (submenuSelection_.index() >= menuDestinations_.size()) {
+            status_ = std::string(menuItems_[submenuSelection_.index()]) + " IS NOT YET AVAILABLE";
+            return;
+        }
+        destination = menuDestinations_[submenuSelection_.index()];
+        menuSelectionStack_.push_back(submenuSelection_.index());
+        menuStack_.push_back(screen_);
+    } else {
+        menuStack_.push_back(Screen::mainMenu);
+    }
+    screen_ = destination;
+    const auto node = menuNode(screen_);
+    menuTitle_ = node->title;
+    menuItems_.assign(node->labels.begin(), node->labels.end());
+    menuDestinations_.assign(node->destinations.begin(), node->destinations.end());
+    submenuSelection_ = ui::MenuSelection(menuItems_.size());
+    status_.clear();
 }
 
 void FrontendMenu::back()
 {
     status_.clear();
-    if (screen_ == Screen::mainMenu || screen_ == Screen::nameEntry)
+    if (menuNode(screen_)) {
+        if (!menuStack_.empty()) {
+            screen_ = menuStack_.back();
+            menuStack_.pop_back();
+            if (screen_ == Screen::mainMenu) {
+                menuTitle_.clear();
+                menuItems_.clear();
+                menuDestinations_.clear();
+            } else if (const auto node = menuNode(screen_)) {
+                menuTitle_ = node->title;
+                menuItems_.assign(node->labels.begin(), node->labels.end());
+                menuDestinations_.assign(node->destinations.begin(), node->destinations.end());
+                const auto previousSelection = menuSelectionStack_.back();
+                menuSelectionStack_.pop_back();
+                submenuSelection_ = ui::MenuSelection(menuItems_.size());
+                for (std::size_t index = 0; index < previousSelection; ++index) submenuSelection_.move(1);
+            }
+        }
+    } else if (screen_ == Screen::mainMenu || screen_ == Screen::nameEntry) {
         screen_ = Screen::profileSelect;
+    }
 }
 
 void FrontendMenu::handleEvent(const SDL_Event& event)
@@ -208,7 +316,7 @@ void FrontendMenu::render() const
         drawCentered(pendingName_.empty() ? "_" : pendingName_ + "_", 240.0f);
         drawCentered("TYPE A NAME - BACKSPACE TO ERASE", 105.0f, 0.65f);
         drawCentered("X/ENTER  ACCEPT", 62.0f, 0.65f);
-    } else {
+    } else if (screen_ == Screen::mainMenu) {
         const SDL_Color blue{30, 145, 225, 255};
         const SDL_Color selected{126, 158, 242, 255};
         const SDL_Color unselected{2, 20, 44, 255};
@@ -226,6 +334,33 @@ void FrontendMenu::render() const
                 ui::drawPillSelector(renderer_, {236.0f, top + 12.0f, 174.0f, 22.0f}, {31, 54, 128, 220});
             font_.drawText(renderer_, mainItems[index], anchors[index].x, anchors[index].y,
                            canvasHeight, 1.0f, index == mainSelection_.index() ? selected : unselected);
+        }
+        ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
+        navIcon_.draw(renderer_, 80.0f, 408.0f);
+        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
+        backIcon_.draw(renderer_, 440.0f, 408.0f);
+        font_.drawText(renderer_, "NAV", 120.0f, 24.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
+    } else if (menuNode(screen_)) {
+        const SDL_Color blue{30, 145, 225, 255};
+        const SDL_Color selected{126, 158, 242, 255};
+        const SDL_Color unselected{2, 20, 44, 255};
+        const SDL_Color gray{180, 190, 200, 255};
+        font_.drawText(renderer_, "AGENT", 10.0f, 415.0f, canvasHeight, 0.72f, blue);
+        font_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 415.0f, canvasHeight, 0.72f, gray);
+        font_.drawText(renderer_, "OBJECTIVES", 10.0f, 397.0f, canvasHeight, 0.72f, blue);
+        font_.drawText(renderer_, "0", 160.0f, 397.0f, canvasHeight, 0.72f, gray);
+        font_.drawText(renderer_, menuTitle_, 465.0f, 415.0f, canvasHeight, 1.0f, blue);
+        constexpr float itemStep = 40.0f;
+        for (std::size_t index = 0; index < menuItems_.size(); ++index) {
+            const SDL_FPoint anchor{240.0f, 280.0f - static_cast<float>(index) * itemStep};
+            if (index == submenuSelection_.index()) {
+                const float top = canvasHeight - anchor.y - 28.0f;
+                ui::drawPillSelector(renderer_, {210.0f, top + 12.0f, 220.0f, 22.0f}, {31, 54, 128, 220});
+            }
+            font_.drawText(renderer_, menuItems_[index], anchor.x, anchor.y, canvasHeight, 1.0f,
+                           index == submenuSelection_.index() ? selected : unselected);
         }
         ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
         navIcon_.draw(renderer_, 80.0f, 408.0f);

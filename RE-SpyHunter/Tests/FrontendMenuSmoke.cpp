@@ -49,7 +49,7 @@ int main(int argc, char** argv)
     std::string backgroundArgument;
     CLI::App commandLine{"Run frontend-menu behavior checks using extracted game assets."};
     commandLine.add_option("assets", assetsArgument, "Extracted-binaries root")->required();
-    commandLine.add_option("background", backgroundArgument, "Optional converted MBACK.mp4 path");
+    commandLine.add_option("-b,--background", backgroundArgument, "Converted MBACK.mp4 path");
     argv = commandLine.ensure_utf8(argv);
     try {
         commandLine.parse(argc, argv);
@@ -105,6 +105,87 @@ int main(int argc, char** argv)
     key(menu, SDLK_RETURN);
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::mainMenu,
                  "Existing profile did not re-enter main menu after Back.")) return 1;
+
+    constexpr std::array submenuScreens{
+        spyhunter::game::FrontendMenu::Screen::operations,
+        spyhunter::game::FrontendMenu::Screen::twoPlayer,
+        spyhunter::game::FrontendMenu::Screen::systemOptions,
+        spyhunter::game::FrontendMenu::Screen::dossier
+    };
+    for (std::size_t index = 0; index < submenuScreens.size(); ++index) {
+        while (menu.selectedMainItem() != index) key(menu, SDLK_DOWN);
+        key(menu, SDLK_RETURN);
+        if (!require(menu.screen() == submenuScreens[index], "Main-menu item did not open its submenu.")) return 1;
+        key(menu, SDLK_DOWN);
+        if (index == 1 && !require(menu.selectedSubmenuItem() == 1,
+                                   "Two Player did not expose both player entries.")) return 1;
+        key(menu, SDLK_UP);
+        if (!require(menu.selectedSubmenuItem() == 0, "Submenu navigation did not wrap back to its first option.")) return 1;
+        menu.update();
+        menu.render();
+        gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+        if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::mainMenu,
+                     "Triangle did not return from submenu to main menu.")) return 1;
+        if (!require(menu.selectedMainItem() == index, "Returning from submenu lost the main-menu selection.")) return 1;
+    }
+
+    const auto expectScreen = [&](const auto screen, const char* message) {
+        return require(menu.screen() == screen, message);
+    };
+    key(menu, SDLK_DOWN); // Wrap from Dossier to Operations
+    key(menu, SDLK_RETURN); // Operations
+    key(menu, SDLK_RETURN); // Mission Select
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::missionSelect,
+                      "Operations did not open Mission Select.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    key(menu, SDLK_DOWN);
+    key(menu, SDLK_RETURN); // Rendezvous
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::rendezvous,
+                      "Operations did not open Rendezvous.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+
+    key(menu, SDLK_DOWN); key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // System Options
+    key(menu, SDLK_RETURN); // Settings
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::settings,
+                      "System Options did not open Settings.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // Controller
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::controller,
+                      "System Options did not open Controller.")) return 1;
+    key(menu, SDLK_RETURN); // Controller 1
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::controller1Options,
+                      "Controller did not open Controller 1 Options.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // Controller 2
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::controller2Options,
+                      "Controller did not open Controller 2 Options.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+
+    key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // Dossier
+    key(menu, SDLK_RETURN); // Extras
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::extras,
+                      "Dossier did not open Extras.")) return 1;
+    key(menu, SDLK_RETURN); // Music Player
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::musicPlayer,
+                      "Extras did not open Music Player.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // Movie Player
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::moviePlayer,
+                      "Extras did not open Movie Player.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // Cheat Grid
+    if (!expectScreen(spyhunter::game::FrontendMenu::Screen::cheatGrid,
+                      "Extras did not open Cheat Grid.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH); // Dossier
+    key(menu, SDLK_DOWN); key(menu, SDLK_RETURN); // Mission Data
+    if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::missionData,
+                 "Dossier did not open Mission Data.")) return 1;
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
 
     spyhunter::game::FrontendMenu reloaded(renderer.get(), assetsPath, profilePath, {});
     if (!reloaded.load(error) || !require(reloaded.profiles()[0] == "SPY1", "Profile did not persist.")) {
