@@ -52,6 +52,7 @@ private:
     runtime::PackedTexture acceptIcon_;
     runtime::PackedTexture deleteIcon_;
     runtime::PackedTexture backIcon_;
+    runtime::PackedTexture menuHighlightBar_;
     runtime::CutsceneSession background_;
     bool backgroundLoaded_ = false;
     std::array<std::string, profileCount> profiles_{};

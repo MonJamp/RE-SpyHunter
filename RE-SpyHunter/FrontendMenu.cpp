@@ -16,6 +16,12 @@ constexpr float canvasHeight = 448.0f;
 constexpr std::array<std::string_view, 4> mainItems{
     "OPERATIONS", "TWO PLAYER", "SYSTEM OPTIONS", "DOSSIER"
 };
+constexpr std::array<SDL_FRect, 4> mainSelectorBounds{{
+    {180.0f, 148.0f, 285.0f, 30.0f},
+    {170.0f, 188.0f, 300.0f, 30.0f},
+    {162.0f, 234.0f, 325.0f, 30.0f},
+    {210.0f, 278.0f, 220.0f, 30.0f}
+}};
 
 struct MenuNode {
     FrontendMenu::Screen screen;
@@ -100,6 +106,8 @@ bool FrontendMenu::load(std::string& error)
     if (!font_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "Eurobet.vkf", renderer_, error))
         return false;
     if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
+        return false;
+    if (!menuHighlightBar_.load(root_ / "DATA" / "MENU.PCK", "menu_highlightbar.rgba", renderer_, error))
         return false;
     const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
     if (!navIcon_.load(systemArchive, "menu_buttons_nav_all.rgba", renderer_, error) ||
@@ -317,25 +325,36 @@ void FrontendMenu::render() const
         drawCentered("TYPE A NAME - BACKSPACE TO ERASE", 105.0f, 0.65f);
         drawCentered("X/ENTER  ACCEPT", 62.0f, 0.65f);
     } else if (screen_ == Screen::mainMenu) {
-        const SDL_Color blue{30, 145, 225, 255};
-        const SDL_Color selected{126, 158, 242, 255};
-        const SDL_Color unselected{2, 20, 44, 255};
-        const SDL_Color gray{180, 190, 200, 255};
-        font_.drawText(renderer_, "AGENT", 10.0f, 415.0f, canvasHeight, 0.72f, blue);
-        font_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 415.0f, canvasHeight, 0.72f, gray);
-        font_.drawText(renderer_, "OBJECTIVES", 10.0f, 397.0f, canvasHeight, 0.72f, blue);
-        font_.drawText(renderer_, "0", 160.0f, 397.0f, canvasHeight, 0.72f, gray);
-        font_.drawText(renderer_, "MAIN MENU", 473.0f, 415.0f, canvasHeight, 1.0f, blue);
+        const SDL_Color blue{50, 54, 105, 255};
+        const SDL_Color selected{92, 129, 239, 255};
+        const SDL_Color unselected{2, 34, 68, 255};
+        const SDL_Color gray{170, 176, 192, 255};
+        const SDL_Color metadataWhite{170, 176, 192, 255};
+        const SDL_Color titleBlue{32, 125, 205, 255};
+        profileFont_.drawText(renderer_, "AGENT", 10.0f, 421.0f, canvasHeight, 0.8f, blue);
+        profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 421.0f, canvasHeight, 0.8f, metadataWhite);
+        profileFont_.drawText(renderer_, "OBJECTIVES", 10.0f, 408.0f, canvasHeight, 0.8f, blue);
+        profileFont_.drawText(renderer_, "0", 162.0f, 408.0f, canvasHeight, 0.8f, metadataWhite);
+        font_.drawText(renderer_, "MAIN MENU", 473.0f, 415.0f, canvasHeight, 1.0f, titleBlue);
         // Recovered ShMenu0 text anchors: (260,280), (250,240), (240,195), (280,150).
         constexpr std::array<SDL_FPoint, 4> anchors{{{260, 280}, {250, 240}, {240, 195}, {280, 150}}};
         for (std::size_t index = 0; index < mainItems.size(); ++index) {
-            const float top = canvasHeight - anchors[index].y - 28.0f;
-            if (index == mainSelection_.index())
-                ui::drawPillSelector(renderer_, {236.0f, top + 12.0f, 174.0f, 22.0f}, {31, 54, 128, 220});
+            if (index == mainSelection_.index()) {
+                const auto& original = mainSelectorBounds[index];
+                const float textWidth = font_.textAdvance(mainItems[index], 1.0f);
+                const float width = textWidth + 51.0f;
+                const float center = original.x + original.w * 0.5f;
+                const SDL_FRect bounds{center - width * 0.5f, original.y + 4.0f, width, 22.0f};
+                ui::drawGradientPillSelector(renderer_, bounds, {18, 46, 93, 255}, {29, 71, 138, 255});
+                menuHighlightBar_.drawRounded(renderer_, bounds);
+                ui::drawPillOutline(renderer_, bounds, {32, 84, 146, 200});
+            }
             font_.drawText(renderer_, mainItems[index], anchors[index].x, anchors[index].y,
                            canvasHeight, 1.0f, index == mainSelection_.index() ? selected : unselected);
         }
-        ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
+        // The reference has a black band below the lower blue ruler, not a blue
+        // footer panel. The PS2 nav sprites/labels are drawn over this band.
+        ui::drawFilledPanel(renderer_, {0, 407, canvasWidth, 41}, {0, 0, 0, 255});
         navIcon_.draw(renderer_, 80.0f, 400.0f);
         acceptIcon_.draw(renderer_, 240.0f, 400.0f);
         backIcon_.draw(renderer_, 440.0f, 400.0f);
@@ -343,15 +362,16 @@ void FrontendMenu::render() const
         font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
         font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
     } else if (menuNode(screen_)) {
-        const SDL_Color blue{30, 145, 225, 255};
-        const SDL_Color selected{126, 158, 242, 255};
-        const SDL_Color unselected{2, 20, 44, 255};
-        const SDL_Color gray{180, 190, 200, 255};
-        font_.drawText(renderer_, "AGENT", 10.0f, 415.0f, canvasHeight, 0.72f, blue);
-        font_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 415.0f, canvasHeight, 0.72f, gray);
-        font_.drawText(renderer_, "OBJECTIVES", 10.0f, 397.0f, canvasHeight, 0.72f, blue);
-        font_.drawText(renderer_, "0", 160.0f, 397.0f, canvasHeight, 0.72f, gray);
-        font_.drawText(renderer_, menuTitle_, 465.0f, 415.0f, canvasHeight, 1.0f, blue);
+        const SDL_Color blue{50, 54, 105, 255};
+        const SDL_Color titleBlue{32, 125, 205, 255};
+        const SDL_Color selected{92, 129, 239, 255};
+        const SDL_Color unselected{2, 34, 68, 255};
+        const SDL_Color gray{170, 176, 192, 255};
+        profileFont_.drawText(renderer_, "AGENT", 10.0f, 421.0f, canvasHeight, 0.8f, blue);
+        profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 421.0f, canvasHeight, 0.8f, gray);
+        profileFont_.drawText(renderer_, "OBJECTIVES", 10.0f, 408.0f, canvasHeight, 0.8f, blue);
+        profileFont_.drawText(renderer_, "0", 162.0f, 408.0f, canvasHeight, 0.8f, gray);
+        font_.drawText(renderer_, menuTitle_, 465.0f, 415.0f, canvasHeight, 1.0f, titleBlue);
         constexpr float itemStep = 40.0f;
         for (std::size_t index = 0; index < menuItems_.size(); ++index) {
             const SDL_FPoint anchor{240.0f, 280.0f - static_cast<float>(index) * itemStep};

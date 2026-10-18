@@ -1,8 +1,9 @@
 # GameUI
 
 `GameUI` contains reusable frontend behavior and drawing primitives. `MenuSelection`
-provides bounded, wraparound menu navigation; `MenuDrawing` provides shared blended
-panels and pill selectors on an SDL renderer.
+provides bounded, wraparound menu navigation. `MenuDrawing` provides shared blended
+panels, flat or gradient pill selectors, and pill outlines on an SDL renderer. Capsule
+dimensions and game-specific colors remain with each screen.
 
 The boundary follows the original game's organization: common `ShMenu` facilities
 are represented here, while concrete screens such as the profile/memory-pack menu

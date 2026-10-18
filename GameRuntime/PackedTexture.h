@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace spyhunter::runtime
 {
@@ -19,6 +20,7 @@ public:
               SDL_Renderer* renderer, std::string& error);
     void unload();
     void draw(SDL_Renderer* renderer, float x, float y, float width = 0, float height = 0) const;
+    void drawRounded(SDL_Renderer* renderer, const SDL_FRect& bounds) const;
     int width() const { return width_; }
     int height() const { return height_; }
 

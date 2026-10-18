@@ -3,6 +3,7 @@
 #include "PckArchive.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -65,10 +66,10 @@ bool PackedTexture::load(const std::filesystem::path& archivePath, const std::st
     if (!width || !height || width > 1024 || height > 1024 || width > (std::numeric_limits<std::size_t>::max)() / height) {
         error = "Packed texture dimensions are invalid."; return false;
     }
+    const std::size_t pixelCount = width * height;
     const std::size_t palette = payload + paletteOffset;
     const std::size_t mipCount = palette + 256 * 4;
     const std::size_t pixels = mipCount + 1;
-    const std::size_t pixelCount = width * height;
     if (!bytes[mipCount] || pixels + pixelCount > bytes.size()) { error = "Packed texture pixels are truncated."; return false; }
 
     std::vector<std::uint8_t> rgba(pixelCount * 4);
@@ -107,5 +108,24 @@ void PackedTexture::draw(SDL_Renderer* renderer, const float x, const float y, f
     if (height <= 0) height = static_cast<float>(height_);
     const SDL_FRect destination{x, y, width, height};
     SDL_RenderTexture(renderer, texture_, nullptr, &destination);
+}
+
+void PackedTexture::drawRounded(SDL_Renderer* renderer, const SDL_FRect& bounds) const
+{
+    if (!texture_ || bounds.w <= 0.0f || bounds.h <= 0.0f) return;
+    const float radius = (std::min)(bounds.h, bounds.w) * 0.5f;
+    const int rows = static_cast<int>(std::ceil(bounds.h));
+    for (int row = 0; row < rows; ++row) {
+        const float dy = static_cast<float>(row) + 0.5f - bounds.h * 0.5f;
+        const float inset = radius - std::sqrt((std::max)(0.0f, radius * radius - dy * dy));
+        const float drawWidth = bounds.w - inset * 2.0f;
+        if (drawWidth <= 0.0f) continue;
+        const SDL_FRect source{inset / bounds.w * width_,
+                               static_cast<float>(row) / bounds.h * height_,
+                               drawWidth / bounds.w * width_,
+                               1.0f / bounds.h * height_};
+        const SDL_FRect destination{bounds.x + inset, bounds.y + static_cast<float>(row), drawWidth, 1.0f};
+        SDL_RenderTexture(renderer, texture_, &source, &destination);
+    }
 }
 }
