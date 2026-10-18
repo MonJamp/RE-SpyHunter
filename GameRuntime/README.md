@@ -1,6 +1,6 @@
 # GameRuntime
 
-`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entry from a PCK archive, converts its indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. Its current format support is the 256 × 256 layout with four control and 95 printable ASCII records used by `euroStile14.vkf` in `INTRO.PCK`. Other VKF layouts require separate decoding before use.
+`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entries from a PCK archive, converts their indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. It supports the 3.0.87 256 × 256 layout with 16-bit glyph records used by `euroStile14.vkf` and the compact 3.0.56 128 × 128 layout with 32-bit glyph records used by `Eurobet.vkf`. Both observed variants contain four control and 95 printable ASCII records. Other VKF layouts require separate decoding before use.
 
 `GameRuntime` is the shared native reconstruction library. Executables such as
 `Tools/SHViewer` and `RE-SpyHunter` own application startup, configuration,
@@ -40,7 +40,7 @@ table is adapted from vgmstream under `VgmstreamLicense.txt`.
 
 ## Boundaries
 
-Startup/frontend coordination lives in the main game's `IntroSequence` and future menu components. PS2 SDK/hardware compatibility lives in the separate [PS2Compatibility](../PS2Compatibility/README.md) library; developer-console font rendering moved there. Asset formats and movie decoding remain here because they are game services, not SDK emulation.
+Startup/frontend coordination lives in the main game's `IntroSequence` and `FrontendMenu`. PS2 SDK/hardware compatibility lives in the separate [PS2Compatibility](../PS2Compatibility/README.md) library; developer-console font rendering moved there. Asset formats and movie decoding remain here because they are game services, not SDK emulation.
 
 Keep configuration-file discovery and executable-specific UI out of this
 library. Add a service only when at least one executable has a concrete use for
