@@ -18,6 +18,8 @@
     <ClInclude Include="AudioMpkPlayer.h" />
     <ClCompile Include="AudioMpkPlayer.cpp" />
     <ClInclude Include="VkiImage.h" />
+    <ClInclude Include="RgbaImage.h" />
+    <ClCompile Include="RgbaImage.cpp" />
 
     <ClInclude Include="FrontendSound.h" />
     <ClCompile Include="VkiImage.cpp" />

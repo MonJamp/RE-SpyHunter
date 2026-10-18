@@ -8,6 +8,7 @@
 #include "../../GameRuntime/AudioMpkPlayer.h"
 #include "../../GameRuntime/PckArchive.h"
 #include "../../GameRuntime/VkiImage.h"
+#include "../../GameRuntime/RgbaImage.h"
 #include "../../GUI/Gui.h"
 #include "../../ThirdParty/CLI11/CLI11.hpp"
 
@@ -69,25 +70,40 @@ std::vector<GameFile> findGameFiles(const std::filesystem::path& root)
 using spyhunter::runtime::DecodedStill;
 using spyhunter::runtime::decodeVki;
 
-SDL_Texture* createTexture(SDL_Renderer* renderer, const DecodedStill& still, std::string& error)
+DecodedStill alphaImage(const DecodedStill& source)
+{
+    auto result = source;
+    for (size_t pixel = 0; pixel < result.rgba.size(); pixel += 4) {
+        const auto alpha = result.rgba[pixel + 3];
+        result.rgba[pixel] = result.rgba[pixel + 1] = result.rgba[pixel + 2] = alpha;
+        result.rgba[pixel + 3] = 255;
+    }
+    return result;
+}
+
+SDL_Texture* createTexture(SDL_Renderer* renderer, const DecodedStill& still, std::string& error, bool alphaOnly = false)
 {
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, still.width, still.height);
     if (!texture) { error = SDL_GetError(); return nullptr; }
-    if (!SDL_UpdateTexture(texture, nullptr, still.rgba.data(), still.width * 4)) {
+    const auto alpha = alphaOnly ? std::optional<DecodedStill>(alphaImage(still)) : std::nullopt;
+    if (!SDL_UpdateTexture(texture, nullptr, alpha ? alpha->rgba.data() : still.rgba.data(), still.width * 4)) {
         error = SDL_GetError(); SDL_DestroyTexture(texture); return nullptr;
     }
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     return texture;
 }
 
 bool supported(const GameFile& file)
 {
-    return file.extension == ".vki" || file.extension == ".pss" || file.extension == ".pck" || file.extension == ".mpk";
+    return file.extension == ".vki" || file.extension == ".pss" || file.extension == ".pck" || file.extension == ".mpk" ||
+           file.extension == ".rgba" || file.extension == ".rgb";
 }
 
 bool supported(const spyhunter::runtime::PckEntry& entry)
 {
-    return entry.type == "vkImage" && lowercase(std::filesystem::path(entry.name).extension().string()) == ".vki";
+    return entry.type == "vkDMATexture" ||
+           (entry.type == "vkImage" && lowercase(std::filesystem::path(entry.name).extension().string()) == ".vki");
 }
 
 bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
@@ -100,8 +116,15 @@ bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
 int main(int argc, char* argv[])
 {
     std::string configArgument;
+    std::string openArgument, memberArgument, exportArgument, captureArgument;
+    bool alphaPreview = false;
     CLI::App commandLine{"Browse and preview extracted SpyHunter game files."};
     commandLine.add_option("config", configArgument, "Optional SpyHunter.config path");
+    auto* openOption = commandLine.add_option("--open", openArgument, "Open a file relative to the configured game directory");
+    commandLine.add_option("--member", memberArgument, "Open a named PCK member (full name or basename)")->needs(openOption);
+    auto* exportOption = commandLine.add_option("--export-image", exportArgument, "Export the selected decoded still as a native-resolution BMP and exit")->needs(openOption);
+    commandLine.add_option("--capture-view", captureArgument, "Save one viewer frame as a BMP and exit")->needs(openOption)->excludes(exportOption);
+    commandLine.add_flag("--alpha", alphaPreview, "Start in alpha-channel view (also applies to image export)")->needs(openOption);
     argv = commandLine.ensure_utf8(argv);
     try {
         commandLine.parse(argc, argv);
@@ -130,7 +153,7 @@ int main(int argc, char* argv[])
 
     const auto gameFiles = findGameFiles(configResult.config->extractedBinariesPath);
     SDL_Log("Configuration: %s", configPath.string().c_str());
-    SDL_Log("Found %zu files under %s; viewing is supported for .VKI, .PSS, .PCK, and .MPK.", gameFiles.size(),
+    SDL_Log("Found %zu files under %s; viewing is supported for .VKI, .RGBA/.RGB, .PSS, .PCK, and .MPK.", gameFiles.size(),
             configResult.config->extractedBinariesPath.string().c_str());
     spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
                               "inventory files=" + std::to_string(gameFiles.size()) +
@@ -143,7 +166,8 @@ int main(int argc, char* argv[])
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("SpyHunter - SH Viewer", spyhunter::gui::defaultWindowWidth,
-                                     spyhunter::gui::defaultWindowHeight, SDL_WINDOW_RESIZABLE, &window, &renderer) ||
+                                     spyhunter::gui::defaultWindowHeight, SDL_WINDOW_RESIZABLE |
+                                     (exportArgument.empty() && captureArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
         !spyhunter::gui::configureRenderer(renderer)) {
         SDL_Log("Window or renderer setup failed: %s", SDL_GetError());
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
@@ -156,6 +180,8 @@ int main(int argc, char* argv[])
     size_t loadedIndex = (std::numeric_limits<size_t>::max)();
     std::optional<size_t> loadedMemberIndex;
     SDL_Texture* stillTexture = nullptr;
+    std::optional<DecodedStill> decodedStill;
+    bool texturePreview = false, checkerboard = true;
     int stillWidth = 0, stillHeight = 0;
     spyhunter::runtime::CutsceneSession cutscene;
     spyhunter::runtime::PckArchive archive;
@@ -209,6 +235,8 @@ int main(int argc, char* argv[])
         audioPlayer.stop();
         SDL_DestroyTexture(stillTexture);
         stillTexture = nullptr;
+        decodedStill.reset();
+        texturePreview = false;
         stillWidth = stillHeight = 0;
         loadedIndex = row.fileIndex;
         loadedMemberIndex = row.memberIndex;
@@ -232,7 +260,7 @@ int main(int argc, char* argv[])
                 return;
             }
             if (entry.size > 32ull * 1024 * 1024 || entry.size > (std::numeric_limits<size_t>::max)()) {
-                status = "PCK member exceeds the VKI viewer size limit.";
+                status = "PCK member exceeds the 32 MiB still-image size limit.";
                 return;
             }
             std::vector<std::uint8_t> bytes(static_cast<size_t>(entry.size));
@@ -241,29 +269,33 @@ int main(int argc, char* argv[])
                 status = "Could not read PCK member: " + error;
                 return;
             }
-            if (const auto decoded = decodeVki(bytes, error)) {
-                stillTexture = createTexture(renderer, *decoded, error);
+            texturePreview = entry.type == "vkDMATexture";
+            if (auto decoded = texturePreview ? spyhunter::runtime::decodeRgba(std::span<const std::uint8_t>(bytes), error) : decodeVki(bytes, error)) {
+                stillTexture = createTexture(renderer, *decoded, error, alphaPreview && texturePreview);
                 if (stillTexture) {
                     stillWidth = decoded->width;
                     stillHeight = decoded->height;
                     status = decoded->details;
+                    decodedStill = std::move(decoded);
                 }
             }
-            if (!stillTexture) status = "Could not display PCK VKI: " + error;
+            if (!stillTexture) status = "Could not display PCK image: " + error;
             return;
         }
         spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info, "select file=" + file.displayPath);
-        if (file.extension == ".vki") {
+        if (file.extension == ".vki" || file.extension == ".rgba" || file.extension == ".rgb") {
             std::string error;
-            if (const auto decoded = decodeVki(file.path, error)) {
-                stillTexture = createTexture(renderer, *decoded, error);
+            texturePreview = file.extension != ".vki";
+            if (auto decoded = texturePreview ? spyhunter::runtime::decodeRgba(file.path, error) : decodeVki(file.path, error)) {
+                stillTexture = createTexture(renderer, *decoded, error, alphaPreview && texturePreview);
                 if (stillTexture) {
                     stillWidth = decoded->width;
                     stillHeight = decoded->height;
                     status = decoded->details;
+                    decodedStill = std::move(decoded);
                 }
             }
-            if (!stillTexture) status = "Could not display VKI: " + error;
+            if (!stillTexture) status = "Could not display image: " + error;
         } else if (file.extension == ".pss") {
             std::string error;
             const spyhunter::runtime::CutsceneOptions options{file.path, true};
@@ -295,9 +327,49 @@ int main(int argc, char* argv[])
                 }
         } else {
             const std::string extension = file.extension.empty() ? "(no extension)" : file.extension;
-            status = "Viewing " + extension + " files is not supported. Current viewers: .VKI, .PSS, .PCK, .MPK.";
+            status = "Viewing " + extension + " files is not supported. Current viewers: .VKI, .RGBA/.RGB, .PSS, .PCK, .MPK.";
         }
     };
+
+    int exitCode = 0;
+    if (!openArgument.empty()) {
+        const auto requested = lowercase(std::filesystem::path(openArgument).lexically_normal().generic_string());
+        const auto found = std::find_if(gameFiles.begin(), gameFiles.end(), [&](const GameFile& file) {
+            return lowercase(file.displayPath) == requested;
+        });
+        if (found == gameFiles.end()) { status = "Requested file was not found: " + openArgument; exitCode = 1; }
+        else {
+            selectedIndex = static_cast<size_t>(found - gameFiles.begin());
+            activateSelected();
+            if (!memberArgument.empty()) {
+                bool foundMember = false;
+                const auto requestedMember = lowercase(memberArgument);
+                for (size_t row = 0; row < browserRows.size(); ++row) {
+                    const auto& candidate = browserRows[row];
+                    if (candidate.fileIndex != static_cast<size_t>(found - gameFiles.begin()) || !candidate.memberIndex ||
+                        found->extension != ".pck") continue;
+                    const auto& name = archive.entries()[*candidate.memberIndex].name;
+                    if (lowercase(name) == requestedMember ||
+                        lowercase(std::filesystem::path(name).filename().string()) == requestedMember) {
+                        selectedIndex = row; activateSelected(); foundMember = true; break;
+                    }
+                }
+                if (!foundMember) { status = "Requested PCK member was not found: " + memberArgument; exitCode = 1; }
+            }
+        }
+    }
+    if (!exportArgument.empty()) {
+        if (!decodedStill || exitCode) { SDL_Log("Image export failed: %s", status.c_str()); exitCode = 1; }
+        else {
+            auto alpha = alphaPreview && texturePreview ? std::optional<DecodedStill>(alphaImage(*decodedStill)) : std::nullopt;
+            SDL_Surface* surface = SDL_CreateSurfaceFrom(stillWidth, stillHeight, SDL_PIXELFORMAT_RGBA32,
+                                                        alpha ? alpha->rgba.data() : decodedStill->rgba.data(), stillWidth * 4);
+            if (!surface || !SDL_SaveBMP(surface, exportArgument.c_str())) { SDL_Log("Image export failed: %s", SDL_GetError()); exitCode = 1; }
+            else SDL_Log("Exported %s: %s", exportArgument.c_str(), status.c_str());
+            SDL_DestroySurface(surface);
+        }
+        running = false;
+    }
 
     while (running) {
         int pixelWidth = 0, pixelHeight = 0;
@@ -322,6 +394,13 @@ int main(int argc, char* argv[])
                 else if (event.key.key == SDLK_3) setFilter(BrowserFilter::pss);
                 else if (event.key.key == SDLK_4) setFilter(BrowserFilter::pck);
                 else if (event.key.key == SDLK_5) setFilter(BrowserFilter::mpk);
+                else if (event.key.key == SDLK_C) checkerboard = !checkerboard;
+                else if (event.key.key == SDLK_A && texturePreview && decodedStill) {
+                    std::string error;
+                    if (auto* replacement = createTexture(renderer, *decodedStill, error, !alphaPreview)) {
+                        SDL_DestroyTexture(stillTexture); stillTexture = replacement; alphaPreview = !alphaPreview;
+                    } else status = "Could not display alpha channel: " + error;
+                }
                 else if (!browserRows.empty() && event.key.key == SDLK_DOWN) {
                     selectedIndex = (std::min)(selectedIndex + 1, browserRows.size() - 1);
                 } else if (!browserRows.empty() && event.key.key == SDLK_UP) {
@@ -388,9 +467,25 @@ int main(int argc, char* argv[])
         }
         if (cutscene.isPlaying()) cutscene.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
         else if (stillTexture) {
-            const SDL_FRect viewport{16.0f, 72.0f, (std::max)(0.0f, browserLeft - 32.0f), (std::max)(0.0f, height - 88.0f)};
+            const SDL_FRect viewport{16.0f, 72.0f, (std::max)(0.0f, browserLeft - 32.0f),
+                                     (std::max)(0.0f, height - (texturePreview ? 118.0f : 88.0f))};
             const auto destination = spyhunter::gui::fittedRect(viewport, static_cast<float>(stillWidth), static_cast<float>(stillHeight));
+            if (texturePreview && checkerboard) {
+                // Show transparency without treating the texture's alpha as an opaque channel.
+                constexpr float tile = 16.0f;
+                for (int row = 0; row * tile < destination.h; ++row)
+                    for (int col = 0; col * tile < destination.w; ++col) {
+                        const auto shade = static_cast<Uint8>((row + col) % 2 ? 60 : 35);
+                        spyhunter::gui::panel(renderer, {destination.x + col * tile, destination.y + row * tile,
+                            (std::min)(tile, destination.w - col * tile), (std::min)(tile, destination.h - row * tile)},
+                            {shade, shade, shade, 255});
+                    }
+            }
             SDL_RenderTexture(renderer, stillTexture, nullptr, &destination);
+            if (texturePreview) {
+                SDL_SetRenderDrawColor(renderer, 170, 180, 195, 255);
+                spyhunter::gui::text(renderer, 24.0f, height - 20.0f, "C: checkerboard / black | A: alpha / color | Raw texture preview");
+            }
         } else if (!loadedMemberIndex && expandedFileIndex == loadedIndex) {
             SDL_SetRenderDrawColor(renderer, 175, 190, 215, 255);
             spyhunter::gui::text(renderer, 24.0f, 78.0f, gameFiles[loadedIndex].extension == ".mpk"
@@ -445,6 +540,14 @@ int main(int argc, char* argv[])
         SDL_SetRenderDrawColor(renderer, 180, 190, 205, 255);
         spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 48.0f, "Click / Enter: view or play | Esc: stop");
         spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 28.0f, spyhunter::gui::shorten(status, 44));
+        if (!captureArgument.empty()) {
+            SDL_Surface* pixels = SDL_RenderReadPixels(renderer, nullptr);
+            if (!pixels || !SDL_SaveBMP(pixels, captureArgument.c_str())) {
+                SDL_Log("Viewer capture failed: %s", SDL_GetError()); exitCode = 1;
+            }
+            SDL_DestroySurface(pixels);
+            running = false;
+        }
         SDL_RenderPresent(renderer);
         SDL_Delay(1);
     }
@@ -455,5 +558,5 @@ int main(int argc, char* argv[])
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    return 0;
+    return exitCode;
 }

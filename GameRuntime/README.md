@@ -31,14 +31,24 @@ in 64 KiB blocks without loading every resource body. Entry boundaries are
 inferred from the next validated header. `VkiImage.h` decodes standalone VKIs
 and supported VKI members read from a PCK.
 
-`PackedTexture` decodes the observed 3.0.85 PSMT8 `vkDMATexture` layout used by
-the 32 × 32 PlayStation navigation icons in `SYSTEM.PCK` and the 512 × 8
-`menu_highlightbar.rgba` strip in `MENU.PCK`. It reads only the selected archive
-member, uploads its first mip level, and leaves menu placement and meaning to the
-caller. `drawRounded` crops scanlines to a caller-supplied capsule bound for UI
-selectors. The native RGBA upload reverses raster row order to map the PS2 texture
-orientation to SDL's top-down texture rows; the Triangle icon now points upward
-as in the supplied PCSX2 frontend capture.
+`RgbaImage.h` decodes serialized `vkDMATexture` `.rgba`/`.rgb` resources from
+bytes or a standalone file. It follows the original version-dependent reader
+for palettes and mip data, supporting PSMT4, PSMT8, PSMCT32 and RGB5A1
+PSMCT16/16S previews. It returns the first palette/base mip as RGBA32, validates
+all stored mip extents, reverses raster rows for the frontend convention,
+reorders the PSMT8 CSM1 palette, and maps PS2 0..128 alpha to 0..255.
+PSMT4 starts with the high nibble; this was checked against the main-menu
+stencil's edge. File/member input is capped at 32 MiB, dimensions at 1024²;
+whole-resource reads are deliberate for these bounded still textures.
+External texture references and absent CLUTs produce explicit errors.
+16-bit alpha is a raw RGB5A1 preview; original GS TEXA/blend/mask state belongs
+to the consumer. This format is not an arbitrary headerless RGBA pixel dump.
+
+`PackedTexture` uses that same decoder for game textures, reads only the selected
+archive member, and uploads its base mip. Placement and meaning stay with the
+caller. `drawRounded` crops scanlines to a caller-supplied capsule bound.
+See the target's [RGBA evidence](../../../docs/rgba-textures.md) for validation
+coverage, source addresses, reference checks, and remaining rendering gaps.
 
 `AudioMpk.h` reads the `MPAK` directory and sequential name table without
 loading the 145 MB package. `AudioMpkPlayer.h` opens selected PS2 VAG ADPCM
