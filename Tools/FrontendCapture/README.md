@@ -20,6 +20,7 @@ Options:
 - `--background MBACK.mp4` uses the prepared animated background. Omit it to inspect UI against the fallback background.
 - `--screen profile|name|main` selects the screen; the default is `profile`.
 - `--selection INDEX` moves the profile or main-menu cursor before rendering (0–2 for profile, 0–3 for main).
+- `--path 2,1,0` accepts zero-based choices from the main menu before applying `--selection`; this example reaches Controller 1 Options in the current native tree. Requires `--screen main`. Each index is checked against the current menu size; paths that reach placeholder actions fail. Paths describe the implemented tree, which still differs from the original requirements.
 - `--filled` creates a temporary `SPY1` profile so the profile menu shows its progress row and Delete legend. The main-menu screen creates this profile automatically.
 - `--region full|header|table|selection|footer` chooses a useful crop. The default is `full`; `selection` follows the selected row. `--rect x,y,width,height` overrides the named region. Coordinates are pixels from the top-left of the 640 × 448 canvas and must fit inside it.
 - `--time-ms 0..8000` chooses roughly when to sample the background after menu creation; default 100 ms. Media decoding and host timing mean this is a convenient sampling control, not a frame-exact PS2 timestamp.

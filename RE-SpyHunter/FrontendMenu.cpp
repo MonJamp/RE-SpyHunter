@@ -116,6 +116,8 @@ bool FrontendMenu::load(std::string& error)
         return false;
     if (!menuLightbar_.load(root_ / "DATA" / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
         return false;
+    if (!profileLightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_lightbar_1pc_long.rgba", renderer_, error))
+        return false;
     const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
     if (!navIcon_.load(systemArchive, "menu_buttons_nav_all.rgba", renderer_, error) ||
         !acceptIcon_.load(systemArchive, "menu_buttons_x.rgba", renderer_, error) ||
@@ -306,14 +308,15 @@ void FrontendMenu::render() const
         profileFont_.drawText(renderer_, "LEVEL", 290.0f, 340.0f, canvasHeight, 1.0f, blue);
         profileFont_.drawText(renderer_, "OBJECTIVES", 440.0f, 340.0f, canvasHeight, 1.0f, blue);
         for (std::size_t index = 0; index < profiles_.size(); ++index) {
-            const float y = 302.0f - static_cast<float>(index) * 35.0f;
+            const float y = 311.0f - static_cast<float>(index) * 35.0f;
             if (index == profileSelection_.index())
-                ui::drawPillSelector(renderer_, {70.0f, canvasHeight - y - 24.0f, 500.0f, 22.0f}, {31, 91, 139, 230});
+                profileLightbar_.drawTinted(renderer_, {-6.0f, 115.0f + static_cast<float>(index) * 35.0f, 640.0f, 32.0f},
+                    sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000));
             const bool empty = profiles_[index].empty();
             const SDL_Color color = index == profileSelection_.index() ? SDL_Color{0, 0, 0, 255} : gray;
-            profileFont_.drawText(renderer_, empty ? "--------" : profiles_[index], 86.0f, y, canvasHeight, 1.0f, color);
-            profileFont_.drawText(renderer_, empty ? "----------" : "MISSION 1", 290.0f, y, canvasHeight, 1.0f, color);
-            profileFont_.drawText(renderer_, empty ? "  --" : "0", 484.0f, y, canvasHeight, 1.0f, color);
+            profileFont_.drawText(renderer_, empty ? "--------" : profiles_[index], 87.0f, y, canvasHeight, 1.0f, color);
+            profileFont_.drawText(renderer_, empty ? "----------" : "MISSION 1", 287.0f, y, canvasHeight, 1.0f, color);
+            profileFont_.drawText(renderer_, empty ? "  --" : "  0", 467.0f, y, canvasHeight, 1.0f, color);
         }
         navIcon_.draw(renderer_, 30.0f, 408.0f);
         acceptIcon_.draw(renderer_, 160.0f, 408.0f);
@@ -327,7 +330,9 @@ void FrontendMenu::render() const
         font_.drawText(renderer_, "BACK", 530.0f, 15.0f, canvasHeight, 1.0f, gray);
     } else if (screen_ == Screen::nameEntry) {
         drawCentered("CREATE PROFILE", 360.0f);
-        ui::drawPillSelector(renderer_, {140.0f, 168.0f, 360.0f, 50.0f}, {31, 54, 128, 220});
+        // Host name-entry layout; original virtual keyboard is not reconstructed yet.
+        profileLightbar_.drawTinted(renderer_, {90.0f, 165.0f, 460.0f, 50.0f},
+            sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000));
         drawCentered(pendingName_.empty() ? "_" : pendingName_ + "_", 240.0f);
         drawCentered("TYPE A NAME - BACKSPACE TO ERASE", 105.0f, 0.65f);
         drawCentered("X/ENTER  ACCEPT", 62.0f, 0.65f);
@@ -365,8 +370,12 @@ void FrontendMenu::render() const
     } else if (menuNode(screen_)) {
         const SDL_Color blue{50, 54, 105, 255};
         const SDL_Color titleBlue{32, 125, 205, 255};
-        const SDL_Color selected{92, 129, 239, 255};
-        const SDL_Color unselected{2, 34, 68, 255};
+        constexpr auto selected = sourceColor(0x3ecf0069, 0x3f0c8b44, 0x3f800000, 0x3f666666);
+        const bool controllerOptions = screen_ == Screen::controller1Options || screen_ == Screen::controller2Options;
+        // ShMenu8/14 override ShButton's unselected text with unSelectedColor.
+        const auto unselected = controllerOptions
+            ? sourceColor(0x3deb50b1, 0x3e28db8c, 0x3e9a9fbe, 0x3f666666)
+            : sourceColor(0, 0x3d1ba5e3, 0x3e0d4fdf, 0x3f3f3b64);
         const SDL_Color gray{170, 176, 192, 255};
         profileFont_.drawText(renderer_, "AGENT", 10.0f, 421.0f, canvasHeight, 0.8f, blue);
         profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 421.0f, canvasHeight, 0.8f, gray);
@@ -375,10 +384,30 @@ void FrontendMenu::render() const
         font_.drawText(renderer_, menuTitle_, 465.0f, 415.0f, canvasHeight, 1.0f, titleBlue);
         constexpr float itemStep = 40.0f;
         for (std::size_t index = 0; index < menuItems_.size(); ++index) {
-            const SDL_FPoint anchor{240.0f, 280.0f - static_cast<float>(index) * itemStep};
+            SDL_FPoint anchor{240.0f, 280.0f - static_cast<float>(index) * itemStep};
+            SDL_FRect sprite{anchor.x - 25.0f, canvasHeight - anchor.y - 16.0f,
+                font_.textAdvance(menuItems_[index], 1.0f) + 50.0f, 22.0f};
+            // Nonzero-alpha content bounds measured from the standard 256x32
+            // lightbar. Placeholder screens fit this real art around their label.
+            constexpr SDL_FRect content{48.0f, 4.0f, 160.0f, 24.0f};
+            bool originalBounds = false;
+            if (screen_ == Screen::systemOptions && index < 3) {
+                constexpr SDL_FPoint text[]{{270,280},{255,240},{276,195}};
+                constexpr SDL_FRect bounds[]{{215,148,206,30},{190,188,256,30},{230,234,170,30}};
+                anchor = text[index]; sprite = bounds[index]; originalBounds = true;
+            } else if (screen_ == Screen::extras && index < 3) {
+                constexpr SDL_FPoint text[]{{248,280},{248,240},{260,195}};
+                constexpr SDL_FRect bounds[]{{183,148,274,30},{176,188,290,30},{196,233,244,30}};
+                anchor = text[index]; sprite = bounds[index]; originalBounds = true;
+            } else if (controllerOptions && index < 3) {
+                constexpr SDL_FPoint text[]{{100,339},{260,339},{420,339}};
+                constexpr SDL_FRect bounds[]{{40,90,230,32},{201,90,220,32},{368,90,185,30}};
+                anchor = text[index]; sprite = bounds[index]; originalBounds = true;
+            }
             if (index == submenuSelection_.index()) {
-                const float top = canvasHeight - anchor.y - 28.0f;
-                ui::drawPillSelector(renderer_, {210.0f, top + 12.0f, 220.0f, 22.0f}, {31, 54, 128, 220});
+                menuLightbar_.drawTinted(renderer_, sprite,
+                    sourceColor(0x3e88a71e, 0x3ef97247, 0x3f800000, 0x3f400000),
+                    originalBounds ? nullptr : &content);
             }
             font_.drawText(renderer_, menuItems_[index], anchor.x, anchor.y, canvasHeight, 1.0f,
                            index == submenuSelection_.index() ? selected : unselected);

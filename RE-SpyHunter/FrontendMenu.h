@@ -31,6 +31,8 @@ public:
     std::size_t selectedProfile() const { return profileSelection_.index(); }
     std::size_t selectedMainItem() const { return mainSelection_.index(); }
     std::size_t selectedSubmenuItem() const { return submenuSelection_.index(); }
+    std::size_t itemCount() const { return screen_ == Screen::profileSelect ? profileCount :
+        screen_ == Screen::mainMenu ? 4 : screen_ == Screen::nameEntry ? 0 : menuItems_.size(); }
     const std::array<std::string, profileCount>& profiles() const { return profiles_; }
     const std::string& pendingName() const { return pendingName_; }
 
@@ -53,6 +55,7 @@ private:
     runtime::PackedTexture deleteIcon_;
     runtime::PackedTexture backIcon_;
     runtime::PackedTexture menuLightbar_;
+    runtime::PackedTexture profileLightbar_;
     runtime::CutsceneSession background_;
     bool backgroundLoaded_ = false;
     std::array<std::string, profileCount> profiles_{};

@@ -48,8 +48,10 @@ to the consumer. This format is not an arbitrary headerless RGBA pixel dump.
 archive member, and uploads its base mip. Placement and meaning stay with the
 caller. `drawRounded` crops scanlines to a caller-supplied capsule bound;
 `drawTinted` draws an unmodified texture rectangle with caller-owned RGB/alpha
-modulation. The main menu uses the latter with the original SYSTEM.PCK lightbar
+modulation and an optional source crop. The main menu uses the latter with the original SYSTEM.PCK lightbar
 and source color vectors, preserving its baked rounded gradient/border.
+The profile screen uses the separate MENU.PCK long lightbar with its own source
+size, row anchors and light-blue tint. Asset-specific geometry stays in the game.
 See the target's [RGBA evidence](../../../docs/rgba-textures.md) for validation
 coverage, source addresses, reference checks, and remaining rendering gaps.
 

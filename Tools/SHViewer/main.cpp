@@ -342,7 +342,7 @@ int main(int argc, char* argv[])
             selectedIndex = static_cast<size_t>(found - gameFiles.begin());
             activateSelected();
             if (!memberArgument.empty()) {
-                bool foundMember = false;
+                std::optional<size_t> memberRow;
                 const auto requestedMember = lowercase(memberArgument);
                 for (size_t row = 0; row < browserRows.size(); ++row) {
                     const auto& candidate = browserRows[row];
@@ -351,10 +351,12 @@ int main(int argc, char* argv[])
                     const auto& name = archive.entries()[*candidate.memberIndex].name;
                     if (lowercase(name) == requestedMember ||
                         lowercase(std::filesystem::path(name).filename().string()) == requestedMember) {
-                        selectedIndex = row; activateSelected(); foundMember = true; break;
+                        if (!memberRow || supported(archive.entries()[*candidate.memberIndex])) memberRow = row;
+                        if (supported(archive.entries()[*candidate.memberIndex])) break;
                     }
                 }
-                if (!foundMember) { status = "Requested PCK member was not found: " + memberArgument; exitCode = 1; }
+                if (memberRow) { selectedIndex = *memberRow; activateSelected(); }
+                else { status = "Requested PCK member was not found: " + memberArgument; exitCode = 1; }
             }
         }
     }

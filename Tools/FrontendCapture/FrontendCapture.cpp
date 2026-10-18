@@ -22,6 +22,7 @@ struct Options
     int timeMs = 100;
     bool filled = false;
     std::vector<int> rectFields;
+    std::vector<int> path;
     std::optional<SDL_Rect> rect;
 };
 
@@ -41,6 +42,8 @@ void configureParser(CLI::App& app, Options& options)
         ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main"}));
     app.add_option("--selection", options.selection, "Selected profile/menu index (default: 0)")
         ->check(CLI::Range(0, 3));
+    app.add_option("--path", options.path, "Comma-separated menu indices to accept from the main menu")
+        ->delimiter(',')->expected(1, -1)->check(CLI::Range(0, 3));
     app.add_flag("--filled", options.filled, "Create a temporary profile before rendering");
     app.add_option("--time-ms", options.timeMs, "Background sample time in milliseconds (default: 100)")
         ->check(CLI::Range(0, 8000));
@@ -52,6 +55,9 @@ void configureParser(CLI::App& app, Options& options)
 
 bool validateOptions(Options& options, std::string& error)
 {
+    if (!options.path.empty() && options.screen != "main") {
+        error = "--path requires --screen main."; return false;
+    }
     if (options.selection >= (options.screen == "main" ? 4 : 3)) {
         error = "--selection is out of range for the selected screen.";
         return false;
@@ -156,6 +162,16 @@ int main(const int argc, char** argv)
     if (options.screen == "main" || options.filled) {
         if (!createProfile(menu)) { std::cerr << "Could not create capture profile.\n"; return 1; }
         if (options.screen == "profile") key(menu, SDLK_ESCAPE);
+    }
+    for (const int selected : options.path) {
+        if (static_cast<std::size_t>(selected) >= menu.itemCount()) { std::cerr << "Menu path index is out of range.\n"; return 2; }
+        for (int index = 0; index < selected; ++index) key(menu, SDLK_DOWN);
+        const auto previous = menu.screen();
+        key(menu, SDLK_RETURN);
+        if (menu.screen() == previous) { std::cerr << "Menu path reaches a placeholder action.\n"; return 2; }
+    }
+    if (options.screen != "name" && static_cast<std::size_t>(options.selection) >= menu.itemCount()) {
+        std::cerr << "Selection is out of range for the destination screen.\n"; return 2;
     }
     for (int index = 0; index < options.selection; ++index) key(menu, SDLK_DOWN);
     const int frameCount = options.timeMs / 10;
