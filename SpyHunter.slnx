@@ -4,6 +4,7 @@
     <Platform Name="x86" />
   </Configurations>
   <Project Path="Configuration/Configuration.vcxproj" Id="9d580e44-f782-4532-93ed-7c2e8c7066bd" />
+  <Project Path="PS2Compatibility/PS2Compatibility.vcxproj" Id="D70ABEC9-2504-4AD9-819A-ED961CD51348" />
   <Project Path="GameRuntime/GameRuntime.vcxproj" Id="4d3b8db7-fae5-4f43-8526-f068756cc509" />
   <Project Path="RE-SpyHunter/RE-SpyHunter.vcxproj" Id="B31A2A58-5D16-4C30-A56B-7D521B164E3E" />
   <Folder Name="/GUI/">

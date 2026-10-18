@@ -3,11 +3,15 @@
 `VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entry from a PCK archive, converts its indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. Its current format support is the 256 × 256 layout with four control and 95 printable ASCII records used by `euroStile14.vkf` in `INTRO.PCK`. Other VKF layouts require separate decoding before use.
 
 `GameRuntime` is the shared native reconstruction library. Executables such as
-`Tools/SHViewer` and the future main game own application startup, configuration,
+`Tools/SHViewer` and `RE-SpyHunter` own application startup, configuration,
 the SDL window, and top-level state selection. This library owns reusable game
 presentation and runtime services.
 
 ## Current API
+
+`StillTexture` owns an SDL still texture, uploads validated RGBA data, loads a standalone VKI or a member from an existing PCK index, and aspect-fits it into a caller-supplied rectangle with linear filtering. Failed replacements retain the prior texture. Whole-image/member decode is deliberate for stills; it never loads the whole archive. Destroy textures before the renderer.
+
+`GamepadSet` owns controller handles, discovers existing pads and handles hotplug. Game-specific button mappings remain in the application/sequence; destroy the set before SDL shutdown.
 
 `CutscenePlayer.h` exposes `CutsceneSession` for non-blocking playback and
 `playCutscene(renderer, options)` as a blocking wrapper. Options contain a source
@@ -34,11 +38,9 @@ It is an asset audition service; callers must separately
 apply the game's per-sound pitch, volume, pan and bus properties. The MPC3 step
 table is adapted from vgmstream under `VgmstreamLicense.txt`.
 
-## Intended additions
+## Boundaries
 
-- Startup/frontend state coordination built from named states and transition
-  results. Menu transitions should depend on state IDs and actions, not on media
-  decoder details.
+Startup/frontend coordination lives in the main game's `IntroSequence` and future menu components. PS2 SDK/hardware compatibility lives in the separate [PS2Compatibility](../PS2Compatibility/README.md) library; developer-console font rendering moved there. Asset formats and movie decoding remain here because they are game services, not SDK emulation.
 
 Keep configuration-file discovery and executable-specific UI out of this
 library. Add a service only when at least one executable has a concrete use for

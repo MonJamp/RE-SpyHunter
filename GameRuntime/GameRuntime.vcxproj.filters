@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <ClInclude Include="StillTexture.h" />
+    <ClCompile Include="StillTexture.cpp" />
+    <ClInclude Include="GamepadSet.h" />
+    <ClCompile Include="GamepadSet.cpp" />
+    <ClInclude Include="VkfTextureFont.h" />
+    <ClCompile Include="VkfTextureFont.cpp" />
     <ClInclude Include="CutscenePlayer.h" />
     <ClCompile Include="CutscenePlayer.cpp" />
     <ClInclude Include="PssAudioReader.h" />
@@ -12,10 +18,10 @@
     <ClInclude Include="AudioMpkPlayer.h" />
     <ClCompile Include="AudioMpkPlayer.cpp" />
     <ClInclude Include="VkiImage.h" />
-    <ClInclude Include="Ps2DevConsoleFont.h" />
+
     <ClInclude Include="FrontendSound.h" />
     <ClCompile Include="VkiImage.cpp" />
-    <ClCompile Include="Ps2DevConsoleFont.cpp" />
+
     <ClCompile Include="FrontendSound.cpp" />
   </ItemGroup>
 </Project>

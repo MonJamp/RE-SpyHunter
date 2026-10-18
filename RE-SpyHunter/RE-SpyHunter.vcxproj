@@ -18,7 +18,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="Application.cpp" />
+    <ClCompile Include="IntroSequence.cpp" />
+    <ClInclude Include="Application.h" />
+    <ClInclude Include="IntroSequence.h" />
     <ProjectReference Include="..\Configuration\Configuration.vcxproj"><Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project></ProjectReference>
+    <ProjectReference Include="..\PS2Compatibility\PS2Compatibility.vcxproj"><Project>{D70ABEC9-2504-4AD9-819A-ED961CD51348}</Project></ProjectReference>
     <ProjectReference Include="..\GameRuntime\GameRuntime.vcxproj"><Project>{4d3b8db7-fae5-4f43-8526-f068756cc509}</Project></ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

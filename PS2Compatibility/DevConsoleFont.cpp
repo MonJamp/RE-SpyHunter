@@ -1,29 +1,19 @@
-#include "Ps2DevConsoleFont.h"
+#include "DevConsoleFont.h"
 
-#include <array>
 #include <cstdint>
-#include <fstream>
 #include <vector>
 
-namespace spyhunter::runtime {
+namespace spyhunter::ps2 {
 namespace {
-// SLUS_200.56: sceFont8 VA 0x004699C8, mapped to this file offset.
-constexpr std::streamoff kFontOffset = 0x0036A9C8;
 constexpr int kAtlasWidth = 128;
 constexpr int kGlyphSize = 8;
 }
 
-bool Ps2DevConsoleFont::load(SDL_Renderer* renderer, const std::filesystem::path& elfPath, std::string& error)
+bool DevConsoleFont::load(SDL_Renderer* renderer, std::span<const std::uint8_t> font, std::string& error)
 {
     unload();
-    std::ifstream file(elfPath, std::ios::binary);
-    if (!file || !file.seekg(kFontOffset)) {
-        error = "Cannot read sceFont8 from " + elfPath.string();
-        return false;
-    }
-    std::array<std::uint8_t, 256 * kGlyphSize> font{};
-    if (!file.read(reinterpret_cast<char*>(font.data()), font.size())) {
-        error = "Truncated sceFont8 in " + elfPath.string();
+    if (font.size() != 256 * kGlyphSize) {
+        error = "sceFont8 requires exactly 2,048 bytes.";
         return false;
     }
 
@@ -51,7 +41,7 @@ bool Ps2DevConsoleFont::load(SDL_Renderer* renderer, const std::filesystem::path
     return true;
 }
 
-void Ps2DevConsoleFont::draw(SDL_Renderer* renderer, const char* text, float x, float y,
+void DevConsoleFont::draw(SDL_Renderer* renderer, const char* text, float x, float y,
                              float cellWidth, float cellHeight, Uint8 shade) const
 {
     if (!atlas_ || !text) return;
@@ -64,7 +54,7 @@ void Ps2DevConsoleFont::draw(SDL_Renderer* renderer, const char* text, float x, 
     }
 }
 
-void Ps2DevConsoleFont::unload()
+void DevConsoleFont::unload()
 {
     if (atlas_) SDL_DestroyTexture(atlas_);
     atlas_ = nullptr;
