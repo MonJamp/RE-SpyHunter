@@ -16,6 +16,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FrontendCapture.cpp" />
+    <ClInclude Include="third_party\CLI11\CLI11.hpp" />
+    <None Include="third_party\CLI11\LICENSE" />
     <ClCompile Include="..\..\RE-SpyHunter\FrontendMenu.cpp" />
     <ClInclude Include="..\..\RE-SpyHunter\FrontendMenu.h" />
     <ProjectReference Include="..\..\GameRuntime\GameRuntime.vcxproj"><Project>{4d3b8db7-fae5-4f43-8526-f068756cc509}</Project></ProjectReference>

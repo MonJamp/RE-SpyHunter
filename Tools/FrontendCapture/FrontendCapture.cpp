@@ -1,82 +1,75 @@
 #include "../../RE-SpyHunter/FrontendMenu.h"
+#include "third_party/CLI11/CLI11.hpp"
 
-#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
-#include <string_view>
+#include <string>
+#include <vector>
 
 namespace
 {
 struct Options
 {
-    std::filesystem::path assets;
-    std::filesystem::path background;
-    std::filesystem::path output;
-    std::string_view screen = "profile";
-    std::string_view region = "full";
+    std::string assets;
+    std::string background;
+    std::string output;
+    std::string screen = "profile";
+    std::string region = "full";
     int selection = 0;
     int timeMs = 100;
     bool filled = false;
+    std::vector<int> rectFields;
     std::optional<SDL_Rect> rect;
 };
 
-void usage()
+std::filesystem::path pathFromUtf8(const std::string& value)
 {
-    std::cerr << "Usage: FrontendCapture --assets ROOT --output FILE.bmp "
-                 "[--background MBACK.mp4] [--screen profile|name|main] "
-                 "[--selection INDEX] [--filled] [--time-ms 0..8000] "
-                 "[--region full|header|table|selection|footer] [--rect x,y,width,height]\n";
+    return std::filesystem::path(std::u8string(value.begin(), value.end()));
 }
 
-bool parseUnsigned(const std::string_view value, int& number)
+void configureParser(CLI::App& app, Options& options)
 {
-    const auto result = std::from_chars(value.data(), value.data() + value.size(), number);
-    return result.ec == std::errc{} && result.ptr == value.data() + value.size() && number >= 0;
+    app.add_option("--assets", options.assets, "Root directory containing extracted game assets")
+        ->required();
+    app.add_option("--output", options.output, "Destination BMP path (directory must exist)")
+        ->required();
+    app.add_option("--background", options.background, "Optional prepared MBACK.mp4 background");
+    app.add_option("--screen", options.screen, "Screen to render: profile, name, or main")
+        ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main"}));
+    app.add_option("--selection", options.selection, "Selected profile/menu index (default: 0)")
+        ->check(CLI::Range(0, 3));
+    app.add_flag("--filled", options.filled, "Create a temporary profile before rendering");
+    app.add_option("--time-ms", options.timeMs, "Background sample time in milliseconds (default: 100)")
+        ->check(CLI::Range(0, 8000));
+    app.add_option("--region", options.region, "Named crop: full, header, table, selection, or footer")
+        ->check(CLI::IsMember(std::vector<std::string>{"full", "header", "table", "selection", "footer"}));
+    app.add_option("--rect", options.rectFields, "Exact crop x,y,width,height (overrides --region)")
+        ->delimiter(',')->expected(4)->check(CLI::Range(0, 640));
 }
 
-std::optional<SDL_Rect> parseRect(std::string_view value)
+bool validateOptions(Options& options, std::string& error)
 {
-    int fields[4]{};
-    for (int index = 0; index < 4; ++index) {
-        const auto comma = value.find(',');
-        if (!parseUnsigned(value.substr(0, comma), fields[index]) ||
-            (index < 3 && comma == std::string_view::npos) ||
-            (index == 3 && comma != std::string_view::npos)) return std::nullopt;
-        if (index < 3) value.remove_prefix(comma + 1);
+    if (options.selection >= (options.screen == "main" ? 4 : 3)) {
+        error = "--selection is out of range for the selected screen.";
+        return false;
     }
-    if (fields[2] == 0 || fields[3] == 0 || fields[2] > 640 || fields[3] > 448 ||
-        fields[0] > 640 - fields[2] || fields[1] > 448 - fields[3]) return std::nullopt;
-    return SDL_Rect{fields[0], fields[1], fields[2], fields[3]};
-}
-
-bool parseOptions(const int argc, char** argv, Options& options)
-{
-    for (int index = 1; index < argc; ++index) {
-        const std::string_view flag = argv[index];
-        if (flag == "--filled") { options.filled = true; continue; }
-        if (++index >= argc) return false;
-        const std::string_view value = argv[index];
-        if (flag == "--assets") options.assets = value;
-        else if (flag == "--background") options.background = value;
-        else if (flag == "--output") options.output = value;
-        else if (flag == "--screen" && (value == "profile" || value == "name" || value == "main")) options.screen = value;
-        else if (flag == "--region" && (value == "full" || value == "header" || value == "table" ||
-                                         value == "selection" || value == "footer")) options.region = value;
-        else if (flag == "--rect") {
-            options.rect = parseRect(value);
-            if (!options.rect) return false;
-        } else if (flag == "--selection") {
-            if (!parseUnsigned(value, options.selection)) return false;
-        } else if (flag == "--time-ms") {
-            if (!parseUnsigned(value, options.timeMs)) return false;
-        } else return false;
+    if (options.screen == "name" && (options.selection != 0 || options.filled)) {
+        error = "The name screen does not support --selection or --filled.";
+        return false;
     }
-    return !options.assets.empty() && !options.output.empty() && options.timeMs <= 8000 &&
-           options.selection < (options.screen == "main" ? 4 : 3) &&
-           (options.screen != "name" || (options.selection == 0 && !options.filled));
+    if (!options.rectFields.empty()) {
+        const auto& fields = options.rectFields;
+        if (fields[2] == 0 || fields[3] == 0 || fields[2] > 640 || fields[3] > 448 ||
+            fields[0] > 640 - fields[2] || fields[1] > 448 - fields[3]) {
+            error = "--rect must fit inside the 640x448 canvas and have nonzero dimensions.";
+            return false;
+        }
+        options.rect = SDL_Rect{fields[0], fields[1], fields[2], fields[3]};
+    }
+    return true;
 }
 
 SDL_Rect captureRegion(const Options& options)
@@ -116,7 +109,22 @@ bool createProfile(spyhunter::game::FrontendMenu& menu)
 int main(const int argc, char** argv)
 {
     Options options;
-    if (!parseOptions(argc, argv, options)) { usage(); return 2; }
+    CLI::App app{"Render a SpyHunter frontend screen and save a native-resolution BMP crop."};
+    configureParser(app, options);
+    argv = app.ensure_utf8(argv);
+    try {
+        app.parse(argc, argv);
+    } catch (const CLI::ParseError& error) {
+        return app.exit(error) == 0 ? 0 : 2;
+    }
+    std::string optionError;
+    if (!validateOptions(options, optionError)) {
+        std::cerr << optionError << "\nRun with --help to see supported options.\n";
+        return 2;
+    }
+    const auto assetsPath = pathFromUtf8(options.assets);
+    const auto backgroundPath = options.background.empty() ? std::filesystem::path{} :
+                                pathFromUtf8(options.background);
     if (!SDL_Init(SDL_INIT_VIDEO)) { std::cerr << SDL_GetError() << '\n'; return 1; }
     struct Quit { ~Quit() { SDL_Quit(); } } quit;
     using Window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>;
@@ -142,7 +150,7 @@ int main(const int argc, char** argv)
     } cleanup{temporaryRoot};
 
     std::string error;
-    spyhunter::game::FrontendMenu menu(renderer.get(), options.assets, temporaryRoot / "profiles.txt", options.background);
+    spyhunter::game::FrontendMenu menu(renderer.get(), assetsPath, temporaryRoot / "profiles.txt", backgroundPath);
     if (!menu.load(error)) { std::cerr << error << '\n'; return 1; }
     if (options.screen == "name") key(menu, SDLK_RETURN);
     if (options.screen == "main" || options.filled) {
@@ -158,11 +166,11 @@ int main(const int argc, char** argv)
     const auto region = captureRegion(options);
     std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> pixels(
         SDL_RenderReadPixels(renderer.get(), &region), SDL_DestroySurface);
-    if (!pixels || !SDL_SaveBMP(pixels.get(), options.output.string().c_str())) {
+    if (!pixels || !SDL_SaveBMP(pixels.get(), options.output.c_str())) {
         std::cerr << SDL_GetError() << '\n'; return 1;
     }
     std::cout << "Captured " << options.screen << " selection " << options.selection << " region "
               << region.x << ',' << region.y << ',' << region.w << ',' << region.h
-              << " -> " << options.output.string() << '\n';
+              << " -> " << options.output << '\n';
     return 0;
 }
