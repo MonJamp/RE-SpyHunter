@@ -308,16 +308,16 @@ void FrontendMenu::render() const
             profileFont_.drawText(renderer_, empty ? "----------" : "MISSION 1", 290.0f, y, canvasHeight, 1.0f, color);
             profileFont_.drawText(renderer_, empty ? "  --" : "0", 484.0f, y, canvasHeight, 1.0f, color);
         }
-        navIcon_.draw(renderer_, 30.0f, 400.0f);
-        acceptIcon_.draw(renderer_, 160.0f, 400.0f);
-        backIcon_.draw(renderer_, 490.0f, 400.0f);
-        font_.drawText(renderer_, "NAV", 70.0f, 24.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "ACCEPT", 200.0f, 24.0f, canvasHeight, 1.0f, gray);
+        navIcon_.draw(renderer_, 30.0f, 408.0f);
+        acceptIcon_.draw(renderer_, 160.0f, 408.0f);
+        backIcon_.draw(renderer_, 490.0f, 408.0f);
+        font_.drawText(renderer_, "NAV", 70.0f, 15.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "ACCEPT", 200.0f, 15.0f, canvasHeight, 1.0f, gray);
         if (!profiles_[profileSelection_.index()].empty()) {
-            deleteIcon_.draw(renderer_, 336.0f, 400.0f);
-            font_.drawText(renderer_, "DELETE", 380.0f, 24.0f, canvasHeight, 1.0f, gray);
+            deleteIcon_.draw(renderer_, 336.0f, 408.0f);
+            font_.drawText(renderer_, "DELETE", 380.0f, 15.0f, canvasHeight, 1.0f, gray);
         }
-        font_.drawText(renderer_, "BACK", 530.0f, 24.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "BACK", 530.0f, 15.0f, canvasHeight, 1.0f, gray);
     } else if (screen_ == Screen::nameEntry) {
         drawCentered("CREATE PROFILE", 360.0f);
         ui::drawPillSelector(renderer_, {140.0f, 168.0f, 360.0f, 50.0f}, {31, 54, 128, 220});
@@ -355,12 +355,12 @@ void FrontendMenu::render() const
         // The reference has a black band below the lower blue ruler, not a blue
         // footer panel. The PS2 nav sprites/labels are drawn over this band.
         ui::drawFilledPanel(renderer_, {0, 407, canvasWidth, 41}, {0, 0, 0, 255});
-        navIcon_.draw(renderer_, 80.0f, 400.0f);
-        acceptIcon_.draw(renderer_, 240.0f, 400.0f);
-        backIcon_.draw(renderer_, 440.0f, 400.0f);
-        font_.drawText(renderer_, "NAV", 120.0f, 24.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
+        navIcon_.draw(renderer_, 80.0f, 408.0f);
+        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
+        backIcon_.draw(renderer_, 440.0f, 408.0f);
+        font_.drawText(renderer_, "NAV", 120.0f, 15.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "ACCEPT", 280.0f, 15.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "BACK", 480.0f, 15.0f, canvasHeight, 1.0f, gray);
     } else if (menuNode(screen_)) {
         const SDL_Color blue{50, 54, 105, 255};
         const SDL_Color titleBlue{32, 125, 205, 255};
@@ -383,12 +383,12 @@ void FrontendMenu::render() const
                            index == submenuSelection_.index() ? selected : unselected);
         }
         ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
-        navIcon_.draw(renderer_, 80.0f, 400.0f);
-        acceptIcon_.draw(renderer_, 240.0f, 400.0f);
-        backIcon_.draw(renderer_, 440.0f, 400.0f);
-        font_.drawText(renderer_, "NAV", 120.0f, 24.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
+        navIcon_.draw(renderer_, 80.0f, 408.0f);
+        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
+        backIcon_.draw(renderer_, 440.0f, 408.0f);
+        font_.drawText(renderer_, "NAV", 120.0f, 15.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "ACCEPT", 280.0f, 15.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "BACK", 480.0f, 15.0f, canvasHeight, 1.0f, gray);
     }
     if (!status_.empty()) drawCentered(status_, 52.0f, 0.58f);
 }
