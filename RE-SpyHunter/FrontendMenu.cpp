@@ -300,13 +300,13 @@ void FrontendMenu::render() const
             profileFont_.drawText(renderer_, empty ? "----------" : "MISSION 1", 290.0f, y, canvasHeight, 1.0f, color);
             profileFont_.drawText(renderer_, empty ? "  --" : "0", 484.0f, y, canvasHeight, 1.0f, color);
         }
-        navIcon_.draw(renderer_, 30.0f, 408.0f);
-        acceptIcon_.draw(renderer_, 160.0f, 408.0f);
-        backIcon_.draw(renderer_, 490.0f, 408.0f);
+        navIcon_.draw(renderer_, 30.0f, 400.0f);
+        acceptIcon_.draw(renderer_, 160.0f, 400.0f);
+        backIcon_.draw(renderer_, 490.0f, 400.0f);
         font_.drawText(renderer_, "NAV", 70.0f, 24.0f, canvasHeight, 1.0f, gray);
         font_.drawText(renderer_, "ACCEPT", 200.0f, 24.0f, canvasHeight, 1.0f, gray);
         if (!profiles_[profileSelection_.index()].empty()) {
-            deleteIcon_.draw(renderer_, 336.0f, 408.0f);
+            deleteIcon_.draw(renderer_, 336.0f, 400.0f);
             font_.drawText(renderer_, "DELETE", 380.0f, 24.0f, canvasHeight, 1.0f, gray);
         }
         font_.drawText(renderer_, "BACK", 530.0f, 24.0f, canvasHeight, 1.0f, gray);
@@ -336,9 +336,9 @@ void FrontendMenu::render() const
                            canvasHeight, 1.0f, index == mainSelection_.index() ? selected : unselected);
         }
         ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
-        navIcon_.draw(renderer_, 80.0f, 408.0f);
-        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
-        backIcon_.draw(renderer_, 440.0f, 408.0f);
+        navIcon_.draw(renderer_, 80.0f, 400.0f);
+        acceptIcon_.draw(renderer_, 240.0f, 400.0f);
+        backIcon_.draw(renderer_, 440.0f, 400.0f);
         font_.drawText(renderer_, "NAV", 120.0f, 24.0f, canvasHeight, 1.0f, gray);
         font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
         font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
@@ -363,9 +363,9 @@ void FrontendMenu::render() const
                            index == submenuSelection_.index() ? selected : unselected);
         }
         ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
-        navIcon_.draw(renderer_, 80.0f, 408.0f);
-        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
-        backIcon_.draw(renderer_, 440.0f, 408.0f);
+        navIcon_.draw(renderer_, 80.0f, 400.0f);
+        acceptIcon_.draw(renderer_, 240.0f, 400.0f);
+        backIcon_.draw(renderer_, 440.0f, 400.0f);
         font_.drawText(renderer_, "NAV", 120.0f, 24.0f, canvasHeight, 1.0f, gray);
         font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
         font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
