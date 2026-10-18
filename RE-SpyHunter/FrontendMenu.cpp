@@ -27,7 +27,7 @@ bool isBack(const SDL_Event& event)
 {
     return (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE) ||
            (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
-            event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST);
+            event.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH);
 }
 }
 
@@ -132,6 +132,9 @@ void FrontendMenu::handleEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
         if (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP) moveSelection(-1);
         else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) moveSelection(1);
+        else if (screen_ == Screen::nameEntry && event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) {
+            if (!pendingName_.empty()) pendingName_.pop_back();
+        }
         return;
     }
     if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
@@ -155,7 +158,7 @@ void FrontendMenu::drawCentered(std::string_view text, const float yFromBottom, 
 void FrontendMenu::drawHighlight(const float x, const float y, const float width, const float height) const
 {
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 38, 75, 169, 220);
+    SDL_SetRenderDrawColor(renderer_, 31, 54, 128, 220);
     const float radius = height * 0.5f;
     const SDL_FRect center{x + radius, y, width - height, height};
     SDL_RenderFillRect(renderer_, &center);
@@ -220,7 +223,7 @@ void FrontendMenu::render() const
         constexpr std::array<SDL_FPoint, 4> anchors{{{260, 280}, {250, 240}, {240, 195}, {280, 150}}};
         for (std::size_t index = 0; index < mainItems.size(); ++index) {
             const float top = canvasHeight - anchors[index].y - 28.0f;
-            if (index == selectedMainItem_) drawHighlight(230.0f, top + 3.0f, 180.0f, 28.0f);
+            if (index == selectedMainItem_) drawHighlight(236.0f, top + 12.0f, 174.0f, 22.0f);
             font_.drawText(renderer_, mainItems[index], anchors[index].x, anchors[index].y,
                            canvasHeight, 1.0f, index == selectedMainItem_ ? selected : unselected);
         }

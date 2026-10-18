@@ -3,7 +3,7 @@
 - `main.cpp`: SDL entry point only.
 - `Application`: configuration, SDL/window/renderer lifetime, controller discovery, event pump and frame clock. Releases game resources before renderer/window/SDL, including failure exits.
 - `IntroSequence`: game-specific startup assets, input policy, state transitions and presentation. `load`, `handleEvent`, `update(deltaSeconds)`, `render` separate lifecycle phases. It retains the recovered constants and existing host approximations through `readyForMenu()` at MLOAD.
-- `FrontendMenu`: local four-slot profile selection and name creation followed by the interactive four-item main menu. It loops the converted original `MBACK.IPU` background when `local-assets/MBACK.mp4` is present. Profiles are stored beside the selected configuration under `local-assets/profiles.txt`; no PS2 memory-card image is read or written.
+- `FrontendMenu`: local four-slot profile selection and name creation followed by the interactive four-item main menu. Escape or controller Triangle returns to the preceding frontend screen. It loops the converted original `MBACK.IPU` background when `local-assets/MBACK.mp4` is present. Profiles are stored beside the selected configuration under `local-assets/profiles.txt`; no PS2 memory-card image is read or written.
 
 Application transfers input/rendering to FrontendMenu after showing MLOAD. Keep generic media/asset services in GameRuntime, and PS2 SDK/hardware compatibility in the independent PS2Compatibility library. Avoid putting menu decisions in decoders or adding a general state framework before another flow needs it.
 

@@ -15,6 +15,14 @@ void key(spyhunter::game::FrontendMenu& menu, SDL_Keycode code)
     menu.handleEvent(event);
 }
 
+void gamepadButton(spyhunter::game::FrontendMenu& menu, SDL_GamepadButton button)
+{
+    SDL_Event event{};
+    event.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    event.gbutton.button = button;
+    menu.handleEvent(event);
+}
+
 bool require(bool condition, const char* message)
 {
     if (!condition) std::cerr << message << '\n';
@@ -89,9 +97,9 @@ int main(int argc, char** argv)
         if (!capture || !SDL_SaveBMP(capture, argv[4])) { std::cerr << SDL_GetError() << '\n'; if (capture) SDL_DestroySurface(capture); return 1; }
         SDL_DestroySurface(capture);
     }
-    key(menu, SDLK_ESCAPE);
+    gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::profileSelect,
-                 "Back did not return from main menu to profile select.")) return 1;
+                 "Triangle did not return from main menu to profile select.")) return 1;
     key(menu, SDLK_RETURN);
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::mainMenu,
                  "Existing profile did not re-enter main menu after Back.")) return 1;
