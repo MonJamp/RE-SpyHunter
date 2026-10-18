@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "FrontendMenu.h"
 #include "IntroSequence.h"
 #include "../Configuration/SpyHunterConfig.h"
 #include "../GameRuntime/GamepadSet.h"
@@ -42,6 +43,8 @@ int runApplication(int argc, char** argv)
     std::string error;
     if (!intro.load(error)) return showError("RE::SpyHunter intro assets", error, window.get());
 
+    std::unique_ptr<FrontendMenu> frontend;
+    bool displayedPreMenuLoading = false;
     auto previous = SDL_GetTicksNS();
     bool running = true;
     while (running) {
@@ -50,15 +53,32 @@ int runApplication(int argc, char** argv)
             if (event.type == SDL_EVENT_QUIT ||
                 (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE)) running = false;
             gamepads.handleEvent(event);
-            if (event.type != SDL_EVENT_GAMEPAD_BUTTON_DOWN || gamepads.contains(event.gbutton.which))
-                intro.handleEvent(event);
+            if (event.type != SDL_EVENT_GAMEPAD_BUTTON_DOWN || gamepads.contains(event.gbutton.which)) {
+                if (frontend) frontend->handleEvent(event);
+                else intro.handleEvent(event);
+            }
         }
         if (!running) break;
         const auto now = SDL_GetTicksNS();
         const double delta = static_cast<double>(now - previous) / 1'000'000'000.0;
         previous = now;
-        if (!intro.update(delta, error)) return showError("RE::SpyHunter movie", error, window.get());
-        intro.render();
+        if (frontend) {
+            frontend->render();
+        } else {
+            if (!intro.update(delta, error)) return showError("RE::SpyHunter movie", error, window.get());
+            intro.render();
+            if (intro.readyForMenu()) {
+                if (displayedPreMenuLoading) {
+                    auto menu = std::make_unique<FrontendMenu>(renderer.get(), result.config->extractedBinariesPath,
+                                                               configPath.parent_path() / "local-assets" / "profiles.txt");
+                    if (!menu->load(error)) return showError("RE::SpyHunter frontend assets", error, window.get());
+                    frontend = std::move(menu);
+                    SDL_SetWindowTitle(window.get(), "RE::SpyHunter - Frontend");
+                } else {
+                    displayedPreMenuLoading = true;
+                }
+            }
+        }
         SDL_RenderPresent(renderer.get());
         SDL_Delay(8);
     }

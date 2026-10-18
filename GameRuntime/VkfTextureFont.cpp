@@ -12,11 +12,8 @@ namespace spyhunter::runtime
 {
 namespace
 {
-constexpr std::size_t kAtlasWidth = 256;
-constexpr std::size_t kAtlasHeight = 256;
 constexpr std::size_t kPaletteEntries = 256;
 constexpr std::size_t kGlyphCount = 99;
-constexpr std::size_t kGlyphRecordSize = 42;
 constexpr std::uint16_t kControlCodes[]{8, 9, 10, 13};
 
 std::uint16_t read16(const std::vector<std::uint8_t>& bytes, std::size_t offset)
@@ -83,28 +80,57 @@ bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_R
     const auto marker = std::search(bytes.begin(), bytes.end(), std::begin(textureType), std::end(textureType));
     if (marker == bytes.end()) { error = "VKF has no embedded vkDMATexture."; return false; }
     const std::size_t version = static_cast<std::size_t>(marker - bytes.begin()) + sizeof(textureType);
-    const std::size_t palette = version + 0x32;
+    if (version + 4 > bytes.size()) { error = "VKF texture header is truncated."; return false; }
+    const std::uint32_t textureVersion = std::uint32_t(bytes[version]) |
+        (std::uint32_t(bytes[version + 1]) << 8) | (std::uint32_t(bytes[version + 2]) << 16) |
+        (std::uint32_t(bytes[version + 3]) << 24);
+    // The retail archives contain both 3.0.87 (INTRO.PCK) and the more compact
+    // 3.0.56 header (MENU.PCK). Their payloads share the same PSMT8/CLUT encoding.
+    const bool compactHeader = textureVersion == 0x03000038;
+    if (!compactHeader && textureVersion != 0x03000057) {
+        error = "Unsupported VKF texture serialization version."; return false;
+    }
+    const std::size_t widthOffset = compactHeader ? 0x13 : 0x0c;
+    const std::size_t heightOffset = compactHeader ? 0x15 : 0x11;
+    const std::size_t formatOffset = compactHeader ? 0x17 : 0x1b;
+    const std::size_t palette = version + (compactHeader ? 0x21 : 0x32);
     const std::size_t mipCount = palette + kPaletteEntries * 4;
     const std::size_t pixels = mipCount + 1;
-    const std::size_t pixelCount = kAtlasWidth * kAtlasHeight;
-    if (pixels + pixelCount > bytes.size() || read16(bytes, version + 0x0c) != kAtlasWidth ||
-        read16(bytes, version + 0x11) != kAtlasHeight || bytes[version + 0x1b] != 0x13 ||
+    if (palette > bytes.size() || version + formatOffset >= bytes.size()) { error = "VKF texture header is truncated."; return false; }
+    const std::size_t atlasWidth = read16(bytes, version + widthOffset);
+    const std::size_t atlasHeight = read16(bytes, version + heightOffset);
+    if (!atlasWidth || !atlasHeight || atlasWidth > 1024 || atlasHeight > 1024 ||
+        atlasWidth > (std::numeric_limits<std::size_t>::max)() / atlasHeight) {
+        error = "VKF texture dimensions are invalid."; return false;
+    }
+    const std::size_t pixelCount = atlasWidth * atlasHeight;
+    if (pixels + pixelCount > bytes.size() || bytes[version + formatOffset] != 0x13 ||
         bytes[mipCount] != 1) {
-        error = "Unsupported VKF texture layout (expected 256 x 256 PSMT8, one mip).";
+        error = "Unsupported VKF texture layout (expected PSMT8 with one mip).";
         return false;
     }
 
-    // This version stores four control records followed by 95 printable ASCII
-    // records. Each has a two-byte code and ten little-endian floats.
+    // Both versions store four control records followed by 95 printable ASCII
+    // records. 3.0.87 uses a 16-bit count/code; 3.0.56 uses 32-bit fields.
+    const std::size_t countSize = compactHeader ? 4 : 2;
+    const std::size_t codeSize = compactHeader ? 4 : 2;
+    const std::size_t glyphRecordSize = codeSize + 10 * sizeof(float);
     std::size_t table = bytes.size();
-    for (std::size_t cursor = pixels + pixelCount; cursor + 2 + kGlyphCount * kGlyphRecordSize <= bytes.size(); ++cursor) {
-        if (read16(bytes, cursor) != kGlyphCount) continue;
-        const std::size_t candidate = cursor + 2;
+    for (std::size_t cursor = pixels + pixelCount; cursor + countSize + kGlyphCount * glyphRecordSize <= bytes.size(); ++cursor) {
+        const auto count = compactHeader
+            ? (std::uint32_t(bytes[cursor]) | (std::uint32_t(bytes[cursor + 1]) << 8) |
+               (std::uint32_t(bytes[cursor + 2]) << 16) | (std::uint32_t(bytes[cursor + 3]) << 24))
+            : read16(bytes, cursor);
+        if (count != kGlyphCount) continue;
+        const std::size_t candidate = cursor + countSize;
         bool valid = true;
         for (std::size_t index = 0; index < kGlyphCount; ++index) {
             const auto expected = index < std::size(kControlCodes) ? kControlCodes[index] :
                 static_cast<std::uint16_t>(index - std::size(kControlCodes) + 32);
-            if (read16(bytes, candidate + index * kGlyphRecordSize) != expected) { valid = false; break; }
+            if (read16(bytes, candidate + index * glyphRecordSize) != expected ||
+                (compactHeader && read16(bytes, candidate + index * glyphRecordSize + 2) != 0)) {
+                valid = false; break;
+            }
         }
         if (valid) { table = candidate; break; }
     }
@@ -112,27 +138,27 @@ bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_R
 
     std::array<Glyph, 128> decoded{};
     for (std::size_t index = 0; index < kGlyphCount; ++index) {
-        const std::size_t record = table + index * kGlyphRecordSize;
+        const std::size_t record = table + index * glyphRecordSize;
         Glyph glyph;
-        const float u0 = readFloat(bytes, record + 2);
-        const float v0 = readFloat(bytes, record + 6);
-        const float u1 = readFloat(bytes, record + 10);
-        const float v1 = readFloat(bytes, record + 14);
-        glyph.width = readFloat(bytes, record + 18);
-        glyph.height = readFloat(bytes, record + 22);
-        glyph.originX = readFloat(bytes, record + 26);
-        glyph.originY = readFloat(bytes, record + 30);
-        glyph.advanceX = readFloat(bytes, record + 34);
-        glyph.advanceY = readFloat(bytes, record + 38);
+        const float u0 = readFloat(bytes, record + codeSize);
+        const float v0 = readFloat(bytes, record + codeSize + 4);
+        const float u1 = readFloat(bytes, record + codeSize + 8);
+        const float v1 = readFloat(bytes, record + codeSize + 12);
+        glyph.width = readFloat(bytes, record + codeSize + 16);
+        glyph.height = readFloat(bytes, record + codeSize + 20);
+        glyph.originX = readFloat(bytes, record + codeSize + 24);
+        glyph.originY = readFloat(bytes, record + codeSize + 28);
+        glyph.advanceX = readFloat(bytes, record + codeSize + 32);
+        glyph.advanceY = readFloat(bytes, record + codeSize + 36);
         if (!std::isfinite(u0) || !std::isfinite(v0) || !std::isfinite(u1) || !std::isfinite(v1) ||
             !std::isfinite(glyph.width) || !std::isfinite(glyph.height) ||
             !std::isfinite(glyph.originX) || !std::isfinite(glyph.originY) ||
             !std::isfinite(glyph.advanceX) || !std::isfinite(glyph.advanceY) ||
             u0 < 0 || v0 < 0 || u1 > 1 || v1 > 1 || u1 < u0 || v1 < v0 ||
-            glyph.width < 0 || glyph.height < 0 || glyph.width > kAtlasWidth || glyph.height > kAtlasHeight) {
+            glyph.width < 0 || glyph.height < 0 || glyph.width > atlasWidth || glyph.height > atlasHeight) {
             error = "VKF glyph metrics are outside the atlas."; return false;
         }
-        glyph.source = {u0 * kAtlasWidth, v0 * kAtlasHeight, glyph.width, glyph.height};
+        glyph.source = {u0 * atlasWidth, v0 * atlasHeight, glyph.width, glyph.height};
         glyph.present = true;
         decoded[read16(bytes, record)] = glyph;
     }
@@ -151,8 +177,8 @@ bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_R
         rgba[target + 3] = static_cast<std::uint8_t>((std::min)(255, int(bytes[source + 3]) * 2));
     }
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
-                                              static_cast<int>(kAtlasWidth), static_cast<int>(kAtlasHeight));
-    if (!texture || !SDL_UpdateTexture(texture, nullptr, rgba.data(), static_cast<int>(kAtlasWidth * 4)) ||
+                                              static_cast<int>(atlasWidth), static_cast<int>(atlasHeight));
+    if (!texture || !SDL_UpdateTexture(texture, nullptr, rgba.data(), static_cast<int>(atlasWidth * 4)) ||
         !SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND) ||
         !SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR)) {
         error = SDL_GetError();
