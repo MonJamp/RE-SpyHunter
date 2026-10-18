@@ -4,6 +4,7 @@
 #include "../GameRuntime/PackedTexture.h"
 #include "../GameRuntime/VkfTextureFont.h"
 #include "../GameUI/MenuSelection.h"
+#include "../GameUI/MenuAxisRepeat.h"
 #include <array>
 #include <filesystem>
 #include <string>
@@ -16,8 +17,8 @@ class FrontendMenu
 {
 public:
     static constexpr std::size_t profileCount = 3;
-    enum class Screen { profileSelect, nameEntry, mainMenu, operations, twoPlayer, systemOptions, dossier,
-                        missionSelect, rendezvous, settings, controller, extras, missionData,
+    enum class Screen { profileSelect, nameEntry, mainMenu, twoPlayer, systemOptions, dossier,
+                        missionSelect, briefing, deleteProfile, settings, controller, extras,
                         musicPlayer, moviePlayer, cheatGrid, controller1Options, controller2Options };
 
     FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& root,
@@ -35,11 +36,23 @@ public:
         screen_ == Screen::mainMenu ? 4 : screen_ == Screen::nameEntry ? 0 : menuItems_.size(); }
     const std::array<std::string, profileCount>& profiles() const { return profiles_; }
     const std::string& pendingName() const { return pendingName_; }
+    const std::string& status() const { return status_; }
+    struct Options {
+        std::array<int, 5> values{0, 10, 10, 10, 1};
+        std::array<std::size_t, 2> controllerSchemes{};
+        bool operator==(const Options&) const = default;
+    };
+    const Options& options() const { return options_[profileSelection_.index()]; }
+    std::size_t musicLayout() const { return musicLayout_; }
 
 private:
     void moveSelection(int direction);
     void accept();
     void back();
+    void open(Screen destination);
+    void configure(Screen destination, std::size_t selection = 0);
+    void horizontal(int direction);
+    void secondary();
     void appendNameCharacter(char character);
     bool saveProfiles(std::string& error) const;
     void drawCentered(std::string_view text, float yFromBottom, float scale = 1.0f) const;
@@ -70,5 +83,11 @@ private:
     std::vector<Screen> menuDestinations_;
     std::string pendingName_;
     std::string status_;
+    std::array<Options, profileCount> options_{};
+    Options entryOptions_;
+    std::size_t mission_ = 0;
+    std::size_t musicLayout_ = 0;
+    ui::MenuAxisRepeat horizontalAxis_{0.95f, 0.6, 0.19};
+    ui::MenuAxisRepeat verticalAxis_{0.95f, 0.6, 0.19};
 };
 }

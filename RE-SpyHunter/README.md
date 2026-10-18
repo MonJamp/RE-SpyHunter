@@ -2,13 +2,14 @@
 
 The source-derived [frontend menu requirements](../docs/frontend-menu-requirements.md)
 document the original hierarchy, navigation and selection commands. The current
-native child tree still contains placeholders and differs from that baseline;
-use the requirements document for subsequent behavior reconstruction.
+native hierarchy now follows that baseline; the implementation-status section
+records remaining gameplay/media, progress and presentation boundaries.
 
 - `main.cpp`: SDL entry point only.
 - `Application`: configuration, SDL/window/renderer lifetime, controller discovery, event pump and frame clock. Releases game resources before renderer/window/SDL, including failure exits.
 - `IntroSequence`: game-specific startup assets, input policy, state transitions and presentation. `load`, `handleEvent`, `update(deltaSeconds)`, `render` separate lifecycle phases. It retains the recovered constants and existing host approximations through `readyForMenu()` at MLOAD.
-- `FrontendMenu`: local three-slot profile selection and name creation followed by the main menu and its Operations, Two Player, System Options, and Dossier navigation tree. The currently recovered child screens are navigable; actions that would start gameplay, change settings, or open media remain placeholders. Escape or controller Triangle returns to the preceding screen while restoring the parent selection. It loops the converted original `MBACK.IPU` background when `local-assets/MBACK.mp4` is present. Profiles are stored beside the selected configuration under `local-assets/profiles.txt`; no PS2 memory-card image is read or written.
+- `FrontendMenu`: local three-slot profile selection/name creation and concrete game menu state. Escape or controller Triangle returns to the preceding screen while restoring the parent selection. It loops the converted original `MBACK.IPU` background when `local-assets/MBACK.mp4` is present. Profiles are stored beside the selected configuration under `local-assets/profiles.txt`; no PS2 memory-card image is read or written.
+- Menu expansion: Operations directly opens the 14-mission selector and briefing tabs; System Options includes Settings, Controller and Extras; Dossier is a read-only mission table. Extras exposes 19 music entries, 24 movies and 16 rewards. Settings and controller schemes accept/cancel and persist per profile (optional `OPTIONS_V1` tail, old three-name files still load); they do not yet drive the audio/vibration services. Gameplay/media playback and model previews remain labeled boundaries. Square or keyboard S opens profile deletion confirmation (No by default); arrows/D-pad navigate, Left/Right adjust/carousel, Cross/Enter accepts, Triangle/Escape cancels. Held left-stick repeat lives in GameUI; title-specific routing/catalogues remain here. Two Player requires two gamepads, and Controller 2 returns on disconnect.
 
 Application transfers input/rendering to FrontendMenu after showing MLOAD. Generic menu cursor movement and selector/panel drawing live in GameUI, mirroring the original split between shared `ShMenu` facilities and concrete menu classes. Keep generic media/asset services in GameRuntime, and PS2 SDK/hardware compatibility in the independent PS2Compatibility library. Avoid putting menu decisions in decoders or adding a general state framework before another flow needs it.
 

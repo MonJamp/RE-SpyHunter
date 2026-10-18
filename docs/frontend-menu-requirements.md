@@ -142,15 +142,18 @@ Back destinations above use the callback and common dispatcher together. For exa
 
 The current reconstruction intentionally uses local profile persistence instead of PS2 memory-card services. Card formatting/emulation/save import is outside the approved slice. Original conditional save calls are evidence for when settings/profile commits happen; they do not require emulating the card.
 
-Current placeholders differ materially from this baseline:
-- Operations presently contains artificial MISSION SELECT / RENDEZVOUS child rows.
-- Extras is presently under Dossier; original Extras is under System Options.
-- Dossier presently has artificial EXTRAS / MISSION DATA choices; original is a progress table.
-- Native Two Player contains player rows; original is a mission/status selector.
-- Native Controller labels currently say CONTROLLER 1/2 OPTIONS instead of original PLAYER 1/2.
-- Settings/media/cheat/gameplay commands remain placeholders. Host name entry is not the original on-screen keyboard.
+Implementation status, 2026-10-18:
+- Original hierarchy is now wired: Operations directly to Mission Select; Extras under System Options; read-only Dossier; Controller PLAYER 1/2 chooser.
+- Mission/two-player catalogues contain 14 entries. Fresh local profiles open only mission 1 for single player; other missions and all two-player missions remain locked because gameplay progress is not implemented. Root Two Player requires two SDL gamepads. Controller 2 disconnect returns to its chooser.
+- Briefing exposes Objectives/Weapons/Enemies, skipping Enemies for missions 1/7 per the recovered Left/Right handlers. Model/objective content and gameplay launch remain explicit unimplemented actions.
+- Settings has five adjustable host controls and accept/cancel semantics; controller schemes commit/cancel separately. Accepted values persist per profile in a backward-compatible OPTIONS_V1 tail after the three existing name lines. These values do not yet change audio output or physical vibration. Numeric sound mode 0..2, volume 0..10, default values and steps are host approximations pending slider reconstruction.
+- Music contains all 19 source entries, horizontal wrapping and five-layout selection; movies contain all 24 entries, with Intro/Credits available for fresh profiles and remaining entries locked; reward grid contains all 16 locked rewards. Playback, visualizers and reward application remain unimplemented and are labeled as such.
+- Dossier shows all 14 mission labels with unknown/unplayed values, not fabricated times or completion. Mission display labels currently reuse the reward-table requirement strings.
+- Profile deletion uses Square/S and a safe-default-No confirmation; Triangle cancels. Host name entry is still not the original on-screen keyboard.
+- Held left-stick movement uses shared GameUI clock-injected repeat, threshold 0.95, initial delay 0.6 s and subsequent interval 0.19 s derived from the source timer reset. Full dispatcher transition timing, D-pad gating, right stick and audio feedback remain open. SDL enumeration order supplies controller ownership; original master-controller reassignment is not reconstructed.
+- Source selector art is reused throughout. Unrecovered screen layouts (including the host 4×4 reward grid), table text, numeric controls and header fitting are explicitly approximate; media/gameplay assets are not loaded for these placeholders.
 
-These are a requirements backlog, not a claim that this documentation pass implemented their behavior. Correcting this hierarchy should be a subsequent reviewed implementation slice.
+These behaviors are covered by the expanded FrontendMenuSmoke checks, including virtual gamepads for the two-player gate. They establish native functionality, not original runtime or pixel parity.
 
 ## Acceptance scenarios for later implementation
 

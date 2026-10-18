@@ -41,9 +41,9 @@ void configureParser(CLI::App& app, Options& options)
     app.add_option("--screen", options.screen, "Screen to render: profile, name, or main")
         ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main"}));
     app.add_option("--selection", options.selection, "Selected profile/menu index (default: 0)")
-        ->check(CLI::Range(0, 3));
+        ->check(CLI::Range(0, 23));
     app.add_option("--path", options.path, "Comma-separated menu indices to accept from the main menu")
-        ->delimiter(',')->expected(1, -1)->check(CLI::Range(0, 3));
+        ->delimiter(',')->expected(1, -1)->check(CLI::Range(0, 23));
     app.add_flag("--filled", options.filled, "Create a temporary profile before rendering");
     app.add_option("--time-ms", options.timeMs, "Background sample time in milliseconds (default: 100)")
         ->check(CLI::Range(0, 8000));
@@ -58,7 +58,7 @@ bool validateOptions(Options& options, std::string& error)
     if (!options.path.empty() && options.screen != "main") {
         error = "--path requires --screen main."; return false;
     }
-    if (options.selection >= (options.screen == "main" ? 4 : 3)) {
+    if (options.path.empty() && options.selection >= (options.screen == "main" ? 4 : 3)) {
         error = "--selection is out of range for the selected screen.";
         return false;
     }
@@ -85,6 +85,7 @@ SDL_Rect captureRegion(const Options& options)
     if (options.region == "footer") return {0, 390, 640, 58};
     if (options.region == "table") return {50, 90, 540, 260};
     if (options.region == "selection") {
+        if (!options.path.empty()) return {50, 90, 540, 260};
         if (options.screen == "profile") return {65, 118 + options.selection * 35, 510, 32};
         if (options.screen == "main") {
             constexpr int y[]{150, 190, 235, 280};
@@ -165,15 +166,20 @@ int main(const int argc, char** argv)
     }
     for (const int selected : options.path) {
         if (static_cast<std::size_t>(selected) >= menu.itemCount()) { std::cerr << "Menu path index is out of range.\n"; return 2; }
-        for (int index = 0; index < selected; ++index) key(menu, SDLK_DOWN);
+        const auto direction = menu.screen() == spyhunter::game::FrontendMenu::Screen::cheatGrid ||
+            menu.screen() == spyhunter::game::FrontendMenu::Screen::briefing ? SDLK_RIGHT : SDLK_DOWN;
+        for (int index = 0; index < selected; ++index) key(menu, direction);
         const auto previous = menu.screen();
         key(menu, SDLK_RETURN);
         if (menu.screen() == previous) { std::cerr << "Menu path reaches a placeholder action.\n"; return 2; }
     }
-    if (options.screen != "name" && static_cast<std::size_t>(options.selection) >= menu.itemCount()) {
+    if (options.screen != "name" && static_cast<std::size_t>(options.selection) >= menu.itemCount() &&
+        !(menu.itemCount() == 0 && options.selection == 0)) {
         std::cerr << "Selection is out of range for the destination screen.\n"; return 2;
     }
-    for (int index = 0; index < options.selection; ++index) key(menu, SDLK_DOWN);
+    const auto direction = menu.screen() == spyhunter::game::FrontendMenu::Screen::cheatGrid ||
+        menu.screen() == spyhunter::game::FrontendMenu::Screen::briefing ? SDLK_RIGHT : SDLK_DOWN;
+    for (int index = 0; index < options.selection; ++index) key(menu, direction);
     const int frameCount = options.timeMs / 10;
     for (int frame = 0; frame < frameCount; ++frame) { menu.update(); SDL_Delay(10); }
     menu.update();
