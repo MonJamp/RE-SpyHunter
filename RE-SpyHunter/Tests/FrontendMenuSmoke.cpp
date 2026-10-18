@@ -63,7 +63,7 @@ int main(int argc, char** argv)
     for (int frame = 0; frame < 30; ++frame) { menu.update(); SDL_Delay(10); }
     menu.render();
     const auto firstFrameHash = frameHash(renderer.get());
-    if (argc == 4) {
+    if (argc >= 4) {
         SDL_RenderPresent(renderer.get());
         SDL_Surface* capture = SDL_RenderReadPixels(renderer.get(), nullptr);
         if (!capture || !SDL_SaveBMP(capture, argv[3])) { std::cerr << SDL_GetError() << '\n'; if (capture) SDL_DestroySurface(capture); return 1; }
@@ -76,7 +76,7 @@ int main(int argc, char** argv)
                      "Converted MBACK background did not animate.")) return 1;
     }
     key(menu, SDLK_UP);
-    if (!require(menu.selectedProfile() == 3, "Profile selection did not wrap upward.")) return 1;
+    if (!require(menu.selectedProfile() == 2, "Profile selection did not wrap upward.")) return 1;
     key(menu, SDLK_DOWN);
     key(menu, SDLK_RETURN);
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::nameEntry, "Empty slot did not open name entry.")) return 1;

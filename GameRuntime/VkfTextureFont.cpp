@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 
@@ -87,13 +88,17 @@ bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_R
     // The retail archives contain both 3.0.87 (INTRO.PCK) and the more compact
     // 3.0.56 header (MENU.PCK). Their payloads share the same PSMT8/CLUT encoding.
     const bool compactHeader = textureVersion == 0x03000038;
-    if (!compactHeader && textureVersion != 0x03000057) {
-        error = "Unsupported VKF texture serialization version."; return false;
+    const bool legacyMenuHeader = textureVersion == 0x0300004f;
+    if (!compactHeader && !legacyMenuHeader && textureVersion != 0x03000057) {
+        char versionText[32]{};
+        std::snprintf(versionText, sizeof(versionText), "0x%08X", textureVersion);
+        error = std::string("Unsupported VKF texture serialization version ") + versionText + ".";
+        return false;
     }
     const std::size_t widthOffset = compactHeader ? 0x13 : 0x0c;
     const std::size_t heightOffset = compactHeader ? 0x15 : 0x11;
     const std::size_t formatOffset = compactHeader ? 0x17 : 0x1b;
-    const std::size_t palette = version + (compactHeader ? 0x21 : 0x32);
+    const std::size_t palette = version + (compactHeader ? 0x21 : legacyMenuHeader ? 0x31 : 0x32);
     const std::size_t mipCount = palette + kPaletteEntries * 4;
     const std::size_t pixels = mipCount + 1;
     if (palette > bytes.size() || version + formatOffset >= bytes.size()) { error = "VKF texture header is truncated."; return false; }

@@ -1,8 +1,8 @@
 #include "FrontendMenu.h"
+#include "../GameUI/MenuDrawing.h"
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <fstream>
 
 namespace spyhunter::game
@@ -40,6 +40,14 @@ bool FrontendMenu::load(std::string& error)
 {
     if (!font_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "Eurobet.vkf", renderer_, error))
         return false;
+    if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
+        return false;
+    const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
+    if (!navIcon_.load(systemArchive, "menu_buttons_nav_all.rgba", renderer_, error) ||
+        !acceptIcon_.load(systemArchive, "menu_buttons_x.rgba", renderer_, error) ||
+        !deleteIcon_.load(systemArchive, "menu_buttons_sq.rgba", renderer_, error) ||
+        !backIcon_.load(systemArchive, "menu_buttons_tri.rgba", renderer_, error))
+        return false;
     if (std::filesystem::is_regular_file(backgroundPath_)) {
         backgroundLoaded_ = background_.load(renderer_, {backgroundPath_, false, false, false, true, ""}, error);
         if (!backgroundLoaded_) return false;
@@ -66,9 +74,9 @@ void FrontendMenu::update()
 void FrontendMenu::moveSelection(const int direction)
 {
     if (screen_ == Screen::profileSelect) {
-        selectedProfile_ = (selectedProfile_ + profiles_.size() + direction) % profiles_.size();
+        profileSelection_.move(direction);
     } else if (screen_ == Screen::mainMenu) {
-        selectedMainItem_ = (selectedMainItem_ + mainItems.size() + direction) % mainItems.size();
+        mainSelection_.move(direction);
         status_.clear();
     }
 }
@@ -97,7 +105,7 @@ bool FrontendMenu::saveProfiles(std::string& error) const
 void FrontendMenu::accept()
 {
     if (screen_ == Screen::profileSelect) {
-        if (profiles_[selectedProfile_].empty()) {
+        if (profiles_[profileSelection_.index()].empty()) {
             pendingName_.clear();
             screen_ = Screen::nameEntry;
         } else {
@@ -108,14 +116,14 @@ void FrontendMenu::accept()
     if (screen_ == Screen::nameEntry) {
         while (!pendingName_.empty() && pendingName_.back() == ' ') pendingName_.pop_back();
         if (pendingName_.empty()) { status_ = "ENTER A PROFILE NAME"; return; }
-        profiles_[selectedProfile_] = pendingName_;
+        profiles_[profileSelection_.index()] = pendingName_;
         std::string error;
         if (!saveProfiles(error)) { status_ = error; return; }
         status_.clear();
         screen_ = Screen::mainMenu;
         return;
     }
-    status_ = std::string(mainItems[selectedMainItem_]) + " IS NOT YET AVAILABLE";
+    status_ = std::string(mainItems[mainSelection_.index()]) + " IS NOT YET AVAILABLE";
 }
 
 void FrontendMenu::back()
@@ -155,21 +163,6 @@ void FrontendMenu::drawCentered(std::string_view text, const float yFromBottom, 
                    yFromBottom, canvasHeight, scale);
 }
 
-void FrontendMenu::drawHighlight(const float x, const float y, const float width, const float height) const
-{
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 31, 54, 128, 220);
-    const float radius = height * 0.5f;
-    const SDL_FRect center{x + radius, y, width - height, height};
-    SDL_RenderFillRect(renderer_, &center);
-    for (int row = 0; row < static_cast<int>(height); ++row) {
-        const float dy = static_cast<float>(row) + 0.5f - radius;
-        const float halfWidth = std::sqrt(std::max(0.0f, radius * radius - dy * dy));
-        SDL_RenderLine(renderer_, x + radius - halfWidth, y + static_cast<float>(row),
-                       x + width - radius + halfWidth, y + static_cast<float>(row));
-    }
-}
-
 void FrontendMenu::render() const
 {
     SDL_SetRenderDrawColor(renderer_, 3, 13, 35, 255);
@@ -179,33 +172,39 @@ void FrontendMenu::render() const
 
     if (screen_ == Screen::profileSelect) {
         const SDL_Color blue{30, 145, 225, 255};
-        const SDL_Color gray{180, 190, 200, 255};
-        font_.drawText(renderer_, "PROFILE MENU", 440.0f, 398.0f, canvasHeight, 1.0f, blue);
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer_, 8, 66, 112, 220);
-        const SDL_FRect topRail{0, 76, canvasWidth, 48};
-        const SDL_FRect bottomRail{0, 390, canvasWidth, 52};
-        SDL_RenderFillRect(renderer_, &topRail);
-        SDL_RenderFillRect(renderer_, &bottomRail);
-        font_.drawText(renderer_, "AGENT NAME", 60.0f, 345.0f, canvasHeight, 0.9f, blue);
-        font_.drawText(renderer_, "LEVEL", 290.0f, 345.0f, canvasHeight, 0.9f, blue);
-        font_.drawText(renderer_, "OBJECTIVES", 440.0f, 345.0f, canvasHeight, 0.9f, blue);
+        const SDL_Color gray{182, 190, 201, 255};
+        profileFont_.drawText(renderer_, "PROFILE MENU", 440.0f, 415.0f, canvasHeight, 1.0f, blue);
+        // ShMenu's BlackBack spans y=91..360 in bottom-origin coordinates. The two
+        // eight-pixel menu bars cap that dark table area at y=86 and y=353.
+        ui::drawFilledPanel(renderer_, {0.0f, 88.0f, canvasWidth, 269.0f}, {0, 0, 0, 178});
+        ui::drawFilledPanel(renderer_, {0.0f, 87.0f, canvasWidth, 8.0f}, {8, 66, 112, 225});
+        ui::drawFilledPanel(renderer_, {0.0f, 354.0f, canvasWidth, 8.0f}, {8, 66, 112, 225});
+        profileFont_.drawText(renderer_, "AGENT NAME", 60.0f, 340.0f, canvasHeight, 1.0f, blue);
+        profileFont_.drawText(renderer_, "LEVEL", 290.0f, 340.0f, canvasHeight, 1.0f, blue);
+        profileFont_.drawText(renderer_, "OBJECTIVES", 440.0f, 340.0f, canvasHeight, 1.0f, blue);
         for (std::size_t index = 0; index < profiles_.size(); ++index) {
-            const float y = 302.0f - static_cast<float>(index) * 48.0f;
-            if (index == selectedProfile_) drawHighlight(70.0f, canvasHeight - y - 24.0f, 500.0f, 30.0f);
+            const float y = 302.0f - static_cast<float>(index) * 35.0f;
+            if (index == profileSelection_.index())
+                ui::drawPillSelector(renderer_, {70.0f, canvasHeight - y - 24.0f, 500.0f, 22.0f}, {31, 91, 139, 230});
             const bool empty = profiles_[index].empty();
-            const SDL_Color color = index == selectedProfile_ ? SDL_Color{0, 0, 0, 255} : gray;
-            font_.drawText(renderer_, empty ? "-------" : profiles_[index], 86.0f, y, canvasHeight, 0.9f, color);
-            font_.drawText(renderer_, empty ? "----------" : "MISSION 1", 290.0f, y, canvasHeight, 0.9f, color);
-            font_.drawText(renderer_, empty ? "--" : "0", 484.0f, y, canvasHeight, 0.9f, color);
+            const SDL_Color color = index == profileSelection_.index() ? SDL_Color{0, 0, 0, 255} : gray;
+            profileFont_.drawText(renderer_, empty ? "--------" : profiles_[index], 86.0f, y, canvasHeight, 1.0f, color);
+            profileFont_.drawText(renderer_, empty ? "----------" : "MISSION 1", 290.0f, y, canvasHeight, 1.0f, color);
+            profileFont_.drawText(renderer_, empty ? "  --" : "0", 484.0f, y, canvasHeight, 1.0f, color);
         }
-        font_.drawText(renderer_, "+ NAV", 60.0f, 16.0f, canvasHeight, 0.75f, gray);
-        font_.drawText(renderer_, "X ACCEPT", 200.0f, 16.0f, canvasHeight, 0.75f, gray);
-        font_.drawText(renderer_, "[] DELETE", 350.0f, 16.0f, canvasHeight, 0.75f, gray);
-        font_.drawText(renderer_, "^ BACK", 505.0f, 16.0f, canvasHeight, 0.75f, gray);
+        navIcon_.draw(renderer_, 30.0f, 408.0f);
+        acceptIcon_.draw(renderer_, 160.0f, 408.0f);
+        backIcon_.draw(renderer_, 490.0f, 408.0f);
+        font_.drawText(renderer_, "NAV", 70.0f, 24.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "ACCEPT", 200.0f, 24.0f, canvasHeight, 1.0f, gray);
+        if (!profiles_[profileSelection_.index()].empty()) {
+            deleteIcon_.draw(renderer_, 336.0f, 408.0f);
+            font_.drawText(renderer_, "DELETE", 380.0f, 24.0f, canvasHeight, 1.0f, gray);
+        }
+        font_.drawText(renderer_, "BACK", 530.0f, 24.0f, canvasHeight, 1.0f, gray);
     } else if (screen_ == Screen::nameEntry) {
         drawCentered("CREATE PROFILE", 360.0f);
-        drawHighlight(140.0f, 168.0f, 360.0f, 50.0f);
+        ui::drawPillSelector(renderer_, {140.0f, 168.0f, 360.0f, 50.0f}, {31, 54, 128, 220});
         drawCentered(pendingName_.empty() ? "_" : pendingName_ + "_", 240.0f);
         drawCentered("TYPE A NAME - BACKSPACE TO ERASE", 105.0f, 0.65f);
         drawCentered("X/ENTER  ACCEPT", 62.0f, 0.65f);
@@ -215,7 +214,7 @@ void FrontendMenu::render() const
         const SDL_Color unselected{2, 20, 44, 255};
         const SDL_Color gray{180, 190, 200, 255};
         font_.drawText(renderer_, "AGENT", 10.0f, 415.0f, canvasHeight, 0.72f, blue);
-        font_.drawText(renderer_, profiles_[selectedProfile_], 100.0f, 415.0f, canvasHeight, 0.72f, gray);
+        font_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 415.0f, canvasHeight, 0.72f, gray);
         font_.drawText(renderer_, "OBJECTIVES", 10.0f, 397.0f, canvasHeight, 0.72f, blue);
         font_.drawText(renderer_, "0", 160.0f, 397.0f, canvasHeight, 0.72f, gray);
         font_.drawText(renderer_, "MAIN MENU", 473.0f, 415.0f, canvasHeight, 1.0f, blue);
@@ -223,17 +222,18 @@ void FrontendMenu::render() const
         constexpr std::array<SDL_FPoint, 4> anchors{{{260, 280}, {250, 240}, {240, 195}, {280, 150}}};
         for (std::size_t index = 0; index < mainItems.size(); ++index) {
             const float top = canvasHeight - anchors[index].y - 28.0f;
-            if (index == selectedMainItem_) drawHighlight(236.0f, top + 12.0f, 174.0f, 22.0f);
+            if (index == mainSelection_.index())
+                ui::drawPillSelector(renderer_, {236.0f, top + 12.0f, 174.0f, 22.0f}, {31, 54, 128, 220});
             font_.drawText(renderer_, mainItems[index], anchors[index].x, anchors[index].y,
-                           canvasHeight, 1.0f, index == selectedMainItem_ ? selected : unselected);
+                           canvasHeight, 1.0f, index == mainSelection_.index() ? selected : unselected);
         }
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer_, 4, 30, 58, 220);
-        const SDL_FRect bottomRail{0, 390, canvasWidth, 52};
-        SDL_RenderFillRect(renderer_, &bottomRail);
-        font_.drawText(renderer_, "+ NAV", 75.0f, 16.0f, canvasHeight, 0.75f, gray);
-        font_.drawText(renderer_, "X ACCEPT", 255.0f, 16.0f, canvasHeight, 0.75f, gray);
-        font_.drawText(renderer_, "^ BACK", 480.0f, 16.0f, canvasHeight, 0.75f, gray);
+        ui::drawFilledPanel(renderer_, {0, 390, canvasWidth, 52}, {4, 30, 58, 220});
+        navIcon_.draw(renderer_, 80.0f, 408.0f);
+        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
+        backIcon_.draw(renderer_, 440.0f, 408.0f);
+        font_.drawText(renderer_, "NAV", 120.0f, 24.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "ACCEPT", 280.0f, 24.0f, canvasHeight, 1.0f, gray);
+        font_.drawText(renderer_, "BACK", 480.0f, 24.0f, canvasHeight, 1.0f, gray);
     }
     if (!status_.empty()) drawCentered(status_, 52.0f, 0.58f);
 }

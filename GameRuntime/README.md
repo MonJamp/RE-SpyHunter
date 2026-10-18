@@ -1,6 +1,6 @@
 # GameRuntime
 
-`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entries from a PCK archive, converts their indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. It supports the 3.0.87 256 × 256 layout with 16-bit glyph records used by `euroStile14.vkf` and the compact 3.0.56 128 × 128 layout with 32-bit glyph records used by `Eurobet.vkf`. Both observed variants contain four control and 95 printable ASCII records. Other VKF layouts require separate decoding before use.
+`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entries from a PCK archive, converts their indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. It supports the 3.0.87 and 3.0.79 256 × 256 layouts with 16-bit glyph records used by `euroStile14.vkf` and `euroStile12.vkf`, plus the compact 3.0.56 128 × 128 layout with 32-bit glyph records used by `Eurobet.vkf`. All three observed variants contain four control and 95 printable ASCII records. Other VKF layouts require separate decoding before use.
 
 `GameRuntime` is the shared native reconstruction library. Executables such as
 `Tools/SHViewer` and `RE-SpyHunter` own application startup, configuration,
@@ -30,6 +30,11 @@ bounded `readEntry` method for one serialized resource. It scans PCK metadata
 in 64 KiB blocks without loading every resource body. Entry boundaries are
 inferred from the next validated header. `VkiImage.h` decodes standalone VKIs
 and supported VKI members read from a PCK.
+
+`PackedTexture` decodes the observed 3.0.85 PSMT8 `vkDMATexture` layout used by
+the 32 × 32 PlayStation navigation icons in `SYSTEM.PCK`. It reads only the
+selected archive member, uploads its first mip level, and leaves menu placement
+and meaning to the caller.
 
 `AudioMpk.h` reads the `MPAK` directory and sequential name table without
 loading the 145 MB package. `AudioMpkPlayer.h` opens selected PS2 VAG ADPCM

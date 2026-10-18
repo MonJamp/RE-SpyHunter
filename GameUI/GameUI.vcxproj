@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals"><VCProjectVersion>18.0</VCProjectVersion><Keyword>Win32Proj</Keyword><ProjectGuid>{8FCAB738-BE59-46D4-A635-0BE87D7519F1}</ProjectGuid><RootNamespace>GameUI</RootNamespace><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration"><ConfigurationType>StaticLibrary</ConfigurationType><PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet><UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries><UseDebugLibraries Condition="'$(Configuration)'=='Release'">false</UseDebugLibraries><WholeProgramOptimization Condition="'$(Configuration)'=='Release'">true</WholeProgramOptimization></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ItemDefinitionGroup><ClCompile><WarningLevel>Level3</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>$(SDL3Root)\include</AdditionalIncludeDirectories></ClCompile></ItemDefinitionGroup>
+  <ItemGroup><ClInclude Include="MenuDrawing.h" /><ClInclude Include="MenuSelection.h" /></ItemGroup>
+  <ItemGroup><None Include="README.md" /></ItemGroup>
+  <ItemGroup><ClCompile Include="MenuDrawing.cpp" /><ClCompile Include="MenuSelection.cpp" /></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="ValidateSDL3Root" BeforeTargets="PrepareForBuild" Condition="'$(Platform)'=='x64'"><Error Condition="'$(SDL3Root)'==''" Text="SDL3Root is not configured." /><Error Condition="!Exists('$(SDL3Root)\include\SDL3\SDL.h')" Text="SDL3Root does not contain include\SDL3\SDL.h: $(SDL3Root)" /></Target>
+</Project>

@@ -27,6 +27,7 @@
     <ProjectReference Include="..\Configuration\Configuration.vcxproj"><Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project></ProjectReference>
     <ProjectReference Include="..\PS2Compatibility\PS2Compatibility.vcxproj"><Project>{D70ABEC9-2504-4AD9-819A-ED961CD51348}</Project></ProjectReference>
     <ProjectReference Include="..\GameRuntime\GameRuntime.vcxproj"><Project>{4d3b8db7-fae5-4f43-8526-f068756cc509}</Project></ProjectReference>
+    <ProjectReference Include="..\GameUI\GameUI.vcxproj"><Project>{8FCAB738-BE59-46D4-A635-0BE87D7519F1}</Project></ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="ValidateSDL3Root" BeforeTargets="PrepareForBuild" Condition="'$(Platform)'=='x64'"><Error Condition="'$(SDL3Root)'==''" Text="SDL3Root is not configured. Copy SpyHunter.local.props.example to SpyHunter.local.props and set SDL3Root." /><Error Condition="!Exists('$(SDL3Root)\include\SDL3\SDL.h')" Text="SDL3Root does not contain include\SDL3\SDL.h: $(SDL3Root)" /><Error Condition="!Exists('$(SDL3Root)\lib\x64\SDL3.lib')" Text="SDL3Root does not contain lib\x64\SDL3.lib: $(SDL3Root)" /></Target>
