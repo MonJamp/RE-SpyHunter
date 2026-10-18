@@ -9,3 +9,5 @@ Copy `SpyHunter.config.example` to `SpyHunter.config` and set `ExtractedBinaries
 When building from a terminal, use the x64 Visual Studio developer environment or x64 MSBuild. The 32-bit MSBuild host has failed at link time with an incompatible `MSPDB140.DLL` in this environment.
 
 `SpyHunter.config` also controls logging: `LogFilePath` selects an append-only, tab-delimited file; `Log.Default` sets the fallback level; and `Log.SHViewer`, `Log.GameRuntime`, `Log.GUI`, and `Log.Configuration` override it by module. Levels are `off`, `error`, `warning`, `info`, `debug`, and `trace`. The example writes to `local-assets/SpyHunter.log` with UTC epoch milliseconds in each line.
+
+For the animated frontend background, run `./prepare-menu-background.ps1` after configuring the extracted-binaries path. It uses FFmpeg at `C:\RE Tools\FFmpeg\ffmpeg-9.0.2-essentials_build\bin\ffmpeg.exe` by default and creates ignored `local-assets/MBACK.mp4` from the original `MOVIES/MBACK.IPU`. Supply `-FfmpegPath` or `-ExtractedBinariesPath` when those locations differ.

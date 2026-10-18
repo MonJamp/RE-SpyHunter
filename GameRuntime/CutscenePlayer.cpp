@@ -49,18 +49,25 @@ private:
 class MovieReader
 {
 public:
-    bool open(const std::filesystem::path& path, std::string& error)
+    bool open(const std::filesystem::path& path, const std::string& mimeType, std::string& error)
     {
         ComPtr<IMFAttributes> attributes;
         HRESULT result = MFCreateAttributes(&attributes, 2);
         if (SUCCEEDED(result)) result = attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
         if (SUCCEEDED(result)) result = attributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, FALSE);
-        if (SUCCEEDED(result)) result = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST,
-                                                     MF_FILEFLAGS_NONE, path.c_str(), &byteStream_);
-        ComPtr<IMFAttributes> byteStreamAttributes;
-        if (SUCCEEDED(result)) result = byteStream_.As(&byteStreamAttributes);
-        if (SUCCEEDED(result)) result = byteStreamAttributes->SetString(MF_BYTESTREAM_CONTENT_TYPE, L"video/mpeg");
-        if (SUCCEEDED(result)) result = MFCreateSourceReaderFromByteStream(byteStream_.Get(), attributes.Get(), &reader_);
+        if (mimeType.empty()) {
+            if (SUCCEEDED(result)) result = MFCreateSourceReaderFromURL(path.c_str(), attributes.Get(), &reader_);
+        } else {
+            if (SUCCEEDED(result)) result = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST,
+                                                         MF_FILEFLAGS_NONE, path.c_str(), &byteStream_);
+            ComPtr<IMFAttributes> byteStreamAttributes;
+            if (SUCCEEDED(result)) result = byteStream_.As(&byteStreamAttributes);
+            if (SUCCEEDED(result)) {
+                const std::wstring wideMime(mimeType.begin(), mimeType.end());
+                result = byteStreamAttributes->SetString(MF_BYTESTREAM_CONTENT_TYPE, wideMime.c_str());
+            }
+            if (SUCCEEDED(result)) result = MFCreateSourceReaderFromByteStream(byteStream_.Get(), attributes.Get(), &reader_);
+        }
         if (FAILED(result)) { error = "Media Foundation could not open the movie (" + describeHResult(result) + ")"; return false; }
 
         reader_->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
@@ -89,6 +96,17 @@ public:
     }
     UINT32 width() const { return width_; }
     UINT32 height() const { return height_; }
+    bool restart(std::string& error)
+    {
+        PROPVARIANT position;
+        PropVariantInit(&position);
+        position.vt = VT_I8;
+        position.hVal.QuadPart = 0;
+        const HRESULT result = reader_->SetCurrentPosition(GUID_NULL, position);
+        PropVariantClear(&position);
+        if (FAILED(result)) { error = "Movie loop restart failed (" + describeHResult(result) + ")"; return false; }
+        return true;
+    }
 private:
     ComPtr<IMFByteStream> byteStream_;
     ComPtr<IMFSourceReader> reader_;
@@ -130,10 +148,12 @@ public:
     bool hasPendingSample = false;
     bool videoFinished = false;
     bool cropToPs2Display = false;
+    bool loop = false;
     bool skipRequested = false;
     std::chrono::steady_clock::time_point skipStart;
     bool pumpAudio(const int targetBytes, const std::uint64_t scanBudget, std::string& error)
     {
+        if (!audioStream) return true;
         int queued = SDL_GetAudioStreamQueued(audioStream);
         if (queued < 0) { error = "Could not query queued audio: " + std::string(SDL_GetError()); return false; }
         if (queued == 0 && !reportedAudioUnderrun && audioReader.audioBytesRead() > 0 &&
@@ -218,19 +238,21 @@ bool CutsceneSession::load(SDL_Renderer* renderer, const CutsceneOptions& option
     auto implementation = std::make_unique<Implementation>();
     implementation->cropToPs2Display = options.cropToPs2Display;
     if (FAILED(implementation->mediaFoundation.result())) return fail("Media Foundation initialization failed (" + describeHResult(implementation->mediaFoundation.result()) + ")");
-    if (!implementation->movie.open(options.sourcePath, error)) return fail(error);
-    if (!implementation->audioReader.open(options.sourcePath, error)) return fail(error);
+    if (!implementation->movie.open(options.sourcePath, options.mimeType, error)) return fail(error);
+    implementation->loop = options.loop;
+    if (options.playPssAudio && !implementation->audioReader.open(options.sourcePath, error)) return fail(error);
     implementation->texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, static_cast<int>(implementation->movie.width()), static_cast<int>(implementation->movie.height()));
     if (!implementation->texture) return fail("Texture creation failed: " + std::string(SDL_GetError()));
-    const SDL_AudioSpec audioSpec{SDL_AUDIO_S16LE, 2, 48000};
-    implementation->audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
-    if (!implementation->audioStream) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
-    // Retail ShAudio starts both movie volume inputs at 1.0; PlayMpeg selects max(music*0.8, effects).
-    // No movie-stream pitch change is present in that call path.
-    if (!SDL_SetAudioStreamGain(implementation->audioStream, 1.0f))
-        return fail("Could not set movie audio gain: " + std::string(SDL_GetError()));
-    if (!implementation->pumpAudio(192 * 1024, 8 * 1024 * 1024, error)) return fail(error);
-    if (!SDL_ResumeAudioStreamDevice(implementation->audioStream)) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
+    if (options.playPssAudio) {
+        const SDL_AudioSpec audioSpec{SDL_AUDIO_S16LE, 2, 48000};
+        implementation->audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
+        if (!implementation->audioStream) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
+        // Retail ShAudio starts both movie volume inputs at 1.0; PlayMpeg selects max(music*0.8, effects).
+        if (!SDL_SetAudioStreamGain(implementation->audioStream, 1.0f))
+            return fail("Could not set movie audio gain: " + std::string(SDL_GetError()));
+        if (!implementation->pumpAudio(192 * 1024, 8 * 1024 * 1024, error)) return fail(error);
+        if (!SDL_ResumeAudioStreamDevice(implementation->audioStream)) return fail("Audio playback initialization failed: " + std::string(SDL_GetError()));
+    }
     implementation->playbackStart = std::chrono::steady_clock::now();
     const auto loadMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(implementation->playbackStart - loadStart).count();
     logging::write("GameRuntime", logging::Level::info,
@@ -259,6 +281,15 @@ void CutsceneSession::update()
         return;
     }
     if (implementation_->videoFinished) {
+        if (implementation_->loop) {
+            if (!implementation_->movie.restart(error_)) return;
+            implementation_->videoFinished = false;
+            implementation_->pendingSample.Reset();
+            implementation_->hasPendingSample = false;
+            implementation_->playbackStart = std::chrono::steady_clock::now();
+            return;
+        }
+        if (!implementation_->audioStream) { finished_ = true; return; }
         const int queued = SDL_GetAudioStreamQueued(implementation_->audioStream);
         if (queued < 0) {
             error_ = "Could not query remaining movie audio: " + std::string(SDL_GetError());

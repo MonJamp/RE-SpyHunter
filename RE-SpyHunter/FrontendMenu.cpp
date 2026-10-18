@@ -24,13 +24,20 @@ bool isAccept(const SDL_Event& event)
 }
 
 FrontendMenu::FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& root,
-                           std::filesystem::path profilePath)
-    : renderer_(renderer), root_(root), profilePath_(std::move(profilePath)) {}
+                           std::filesystem::path profilePath, std::filesystem::path backgroundPath)
+    : renderer_(renderer), root_(root), profilePath_(std::move(profilePath)),
+      backgroundPath_(std::move(backgroundPath)) {}
 
 bool FrontendMenu::load(std::string& error)
 {
     if (!font_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "Eurobet.vkf", renderer_, error))
         return false;
+    if (std::filesystem::is_regular_file(backgroundPath_)) {
+        backgroundLoaded_ = background_.load(renderer_, {backgroundPath_, false, false, false, true, ""}, error);
+        if (!backgroundLoaded_) return false;
+    } else {
+        SDL_Log("Converted MBACK background is unavailable: %s", backgroundPath_.string().c_str());
+    }
     std::ifstream input(profilePath_);
     std::string line;
     for (std::size_t index = 0; index < profiles_.size() && std::getline(input, line); ++index) {
@@ -41,6 +48,11 @@ bool FrontendMenu::load(std::string& error)
     }
     error.clear();
     return true;
+}
+
+void FrontendMenu::update()
+{
+    if (backgroundLoaded_) background_.update();
 }
 
 void FrontendMenu::moveSelection(const int direction)
@@ -137,24 +149,37 @@ void FrontendMenu::drawHighlight(const float x, const float y, const float width
 
 void FrontendMenu::render() const
 {
-    // MBACK.IPU is confirmed as the original moving background, but its decode is not yet implemented.
     SDL_SetRenderDrawColor(renderer_, 3, 13, 35, 255);
     SDL_RenderClear(renderer_);
-    SDL_SetRenderDrawColor(renderer_, 10, 47, 82, 255);
-    for (float y = 0; y < canvasHeight; y += 56.0f) {
-        const SDL_FRect stripe{0, y, canvasWidth, 2};
-        SDL_RenderFillRect(renderer_, &stripe);
-    }
+    const SDL_FRect viewport{0, 0, canvasWidth, canvasHeight};
+    if (backgroundLoaded_) background_.render(renderer_, viewport);
 
     if (screen_ == Screen::profileSelect) {
-        drawCentered("PROFILE MENU", 390.0f);
+        const SDL_Color blue{30, 145, 225, 255};
+        const SDL_Color gray{180, 190, 200, 255};
+        font_.drawText(renderer_, "PROFILE MENU", 440.0f, 398.0f, canvasHeight, 1.0f, blue);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 8, 66, 112, 220);
+        const SDL_FRect topRail{0, 76, canvasWidth, 48};
+        const SDL_FRect bottomRail{0, 390, canvasWidth, 52};
+        SDL_RenderFillRect(renderer_, &topRail);
+        SDL_RenderFillRect(renderer_, &bottomRail);
+        font_.drawText(renderer_, "AGENT NAME", 60.0f, 345.0f, canvasHeight, 0.9f, blue);
+        font_.drawText(renderer_, "LEVEL", 290.0f, 345.0f, canvasHeight, 0.9f, blue);
+        font_.drawText(renderer_, "OBJECTIVES", 440.0f, 345.0f, canvasHeight, 0.9f, blue);
         for (std::size_t index = 0; index < profiles_.size(); ++index) {
-            const float top = 90.0f + static_cast<float>(index) * 62.0f;
-            if (index == selectedProfile_) drawHighlight(150.0f, top, 340.0f, 38.0f);
-            const auto label = profiles_[index].empty() ? "CREATE PROFILE" : profiles_[index];
-            font_.drawText(renderer_, label, 180.0f, canvasHeight - top - 29.0f, canvasHeight, 1.0f);
+            const float y = 302.0f - static_cast<float>(index) * 48.0f;
+            if (index == selectedProfile_) drawHighlight(70.0f, canvasHeight - y - 24.0f, 500.0f, 30.0f);
+            const bool empty = profiles_[index].empty();
+            const SDL_Color color = index == selectedProfile_ ? SDL_Color{0, 0, 0, 255} : gray;
+            font_.drawText(renderer_, empty ? "-------" : profiles_[index], 86.0f, y, canvasHeight, 0.9f, color);
+            font_.drawText(renderer_, empty ? "----------" : "MISSION 1", 290.0f, y, canvasHeight, 0.9f, color);
+            font_.drawText(renderer_, empty ? "--" : "0", 484.0f, y, canvasHeight, 0.9f, color);
         }
-        drawCentered("UP/DOWN  SELECT     X/ENTER  ACCEPT", 18.0f, 0.65f);
+        font_.drawText(renderer_, "+ NAV", 60.0f, 16.0f, canvasHeight, 0.75f, gray);
+        font_.drawText(renderer_, "X ACCEPT", 200.0f, 16.0f, canvasHeight, 0.75f, gray);
+        font_.drawText(renderer_, "[] DELETE", 350.0f, 16.0f, canvasHeight, 0.75f, gray);
+        font_.drawText(renderer_, "^ BACK", 505.0f, 16.0f, canvasHeight, 0.75f, gray);
     } else if (screen_ == Screen::nameEntry) {
         drawCentered("CREATE PROFILE", 360.0f);
         drawHighlight(140.0f, 168.0f, 360.0f, 50.0f);

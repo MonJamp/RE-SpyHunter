@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../GameRuntime/CutscenePlayer.h"
 #include "../GameRuntime/VkfTextureFont.h"
 #include <array>
 #include <filesystem>
@@ -14,9 +15,10 @@ public:
     enum class Screen { profileSelect, nameEntry, mainMenu };
 
     FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& root,
-                 std::filesystem::path profilePath);
+                 std::filesystem::path profilePath, std::filesystem::path backgroundPath);
     bool load(std::string& error);
     void handleEvent(const SDL_Event& event);
+    void update();
     void render() const;
 
     Screen screen() const { return screen_; }
@@ -36,7 +38,10 @@ private:
     SDL_Renderer* renderer_;
     std::filesystem::path root_;
     std::filesystem::path profilePath_;
+    std::filesystem::path backgroundPath_;
     runtime::VkfTextureFont font_;
+    runtime::CutsceneSession background_;
+    bool backgroundLoaded_ = false;
     std::array<std::string, profileCount> profiles_{};
     Screen screen_ = Screen::profileSelect;
     std::size_t selectedProfile_ = 0;

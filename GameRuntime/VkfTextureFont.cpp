@@ -192,9 +192,11 @@ bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_R
 }
 
 void VkfTextureFont::drawText(SDL_Renderer* renderer, std::string_view text, float x, float yFromBottom,
-                              float canvasHeight, float scale) const
+                              float canvasHeight, float scale, SDL_Color color) const
 {
     if (!texture_ || !renderer) return;
+    SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
+    SDL_SetTextureAlphaMod(texture_, color.a);
     float penX = x;
     float penY = yFromBottom;
     for (const unsigned char character : text) {
@@ -211,6 +213,8 @@ void VkfTextureFont::drawText(SDL_Renderer* renderer, std::string_view text, flo
         penY += glyph.advanceY * scale;
         if (character == '\n' || character == '\r') penX = x;
     }
+    SDL_SetTextureColorMod(texture_, 255, 255, 255);
+    SDL_SetTextureAlphaMod(texture_, 255);
 }
 
 float VkfTextureFont::textAdvance(std::string_view text, float scale) const

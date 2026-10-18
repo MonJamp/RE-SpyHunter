@@ -63,6 +63,7 @@ int runApplication(int argc, char** argv)
         const double delta = static_cast<double>(now - previous) / 1'000'000'000.0;
         previous = now;
         if (frontend) {
+            frontend->update();
             frontend->render();
         } else {
             if (!intro.update(delta, error)) return showError("RE::SpyHunter movie", error, window.get());
@@ -70,7 +71,8 @@ int runApplication(int argc, char** argv)
             if (intro.readyForMenu()) {
                 if (displayedPreMenuLoading) {
                     auto menu = std::make_unique<FrontendMenu>(renderer.get(), result.config->extractedBinariesPath,
-                                                               configPath.parent_path() / "local-assets" / "profiles.txt");
+                                                               configPath.parent_path() / "local-assets" / "profiles.txt",
+                                                               configPath.parent_path() / "local-assets" / "MBACK.mp4");
                     if (!menu->load(error)) return showError("RE::SpyHunter frontend assets", error, window.get());
                     frontend = std::move(menu);
                     SDL_SetWindowTitle(window.get(), "RE::SpyHunter - Frontend");

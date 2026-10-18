@@ -27,6 +27,10 @@ struct CutsceneOptions
     std::filesystem::path sourcePath;
     bool escapeSkips = true;
     bool cropToPs2Display = false;
+    bool playPssAudio = true;
+    bool loop = false;
+    // Empty selects Media Foundation's URL/extension resolver. PSS uses video/mpeg.
+    std::string mimeType = "video/mpeg";
 };
 
 // Incremental PSS playback for applications that own their own event loop and

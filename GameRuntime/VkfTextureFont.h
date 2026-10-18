@@ -24,7 +24,8 @@ public:
     bool loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_Renderer* renderer, std::string& error);
     void unload();
     void drawText(SDL_Renderer* renderer, std::string_view text, float x, float yFromBottom,
-                  float canvasHeight, float scale = 1.0f) const;
+                  float canvasHeight, float scale = 1.0f,
+                  SDL_Color color = {255, 255, 255, 255}) const;
     float textAdvance(std::string_view text, float scale = 1.0f) const;
     bool loaded() const { return texture_ != nullptr; }
 

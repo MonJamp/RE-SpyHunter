@@ -3,7 +3,7 @@
 - `main.cpp`: SDL entry point only.
 - `Application`: configuration, SDL/window/renderer lifetime, controller discovery, event pump and frame clock. Releases game resources before renderer/window/SDL, including failure exits.
 - `IntroSequence`: game-specific startup assets, input policy, state transitions and presentation. `load`, `handleEvent`, `update(deltaSeconds)`, `render` separate lifecycle phases. It retains the recovered constants and existing host approximations through `readyForMenu()` at MLOAD.
-- `FrontendMenu`: local four-slot profile selection and name creation followed by the interactive four-item main menu. Profiles are stored beside the selected configuration under `local-assets/profiles.txt`; no PS2 memory-card image is read or written.
+- `FrontendMenu`: local four-slot profile selection and name creation followed by the interactive four-item main menu. It loops the converted original `MBACK.IPU` background when `local-assets/MBACK.mp4` is present. Profiles are stored beside the selected configuration under `local-assets/profiles.txt`; no PS2 memory-card image is read or written.
 
 Application transfers input/rendering to FrontendMenu after showing MLOAD. Keep generic media/asset services in GameRuntime, and PS2 SDK/hardware compatibility in the independent PS2Compatibility library. Avoid putting menu decisions in decoders or adding a general state framework before another flow needs it.
 
@@ -17,4 +17,6 @@ Build `Tests/IntroSequenceSmoke.vcxproj` with x64 MSBuild (`/m:1 /nr:false /p:Co
 
 Checks: packed/standalone still loading and failed replacement, invalid console glyph input, missing assets, both autosave branches, repeated-input suppression, fade/idle clamps, legal duration, all three movie skips, attract return, Start and MLOAD endpoint. Time is injected for stills; movie skip fades run in real time. This is an integration smoke check with local assets, not pixel/audio parity, physical gamepad testing, or all-movie completion validation.
 
-Build `Tests/FrontendMenuSmoke.vcxproj` the same way and run `Tests/x64/Debug/FrontendMenuSmoke.exe "<extracted-binaries-root>"`. It verifies empty-slot naming, editing, local persistence, existing-profile selection, selection wraparound, main-menu entry, and a software-rendered frame. It deletes its temporary profile file after the run.
+Run `prepare-menu-background.ps1` from the solution directory once to convert the original `MOVIES/MBACK.IPU` into ignored `local-assets/MBACK.mp4`; the script defaults to the documented shared FFmpeg installation and prints both hashes. This keeps derived video out of Git and leaves the extracted source unchanged.
+
+Build `Tests/FrontendMenuSmoke.vcxproj` the same way and run `Tests/x64/Debug/FrontendMenuSmoke.exe "<extracted-binaries-root>" "<local-assets/MBACK.mp4>"`. It verifies profile behavior, software rendering, and that two background frames differ. An optional third argument saves the initial frame as BMP. It deletes its temporary profile file after the run.

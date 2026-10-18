@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <span>
 
 namespace
 {
@@ -19,11 +20,22 @@ bool require(bool condition, const char* message)
     if (!condition) std::cerr << message << '\n';
     return condition;
 }
+
+std::uint64_t frameHash(SDL_Renderer* renderer)
+{
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(SDL_RenderReadPixels(renderer, nullptr), SDL_DestroySurface);
+    if (!surface) return 0;
+    const auto bytes = std::span(static_cast<const std::uint8_t*>(surface->pixels),
+                                 static_cast<std::size_t>(surface->pitch) * surface->h);
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const auto byte : bytes) { hash ^= byte; hash *= 1099511628211ull; }
+    return hash;
+}
 }
 
 int main(int argc, char** argv)
 {
-    if (argc != 2) { std::cerr << "Expected extracted-binaries root.\n"; return 2; }
+    if (argc < 2 || argc > 4) { std::cerr << "Expected extracted-binaries root, optional converted MBACK.mp4, and optional BMP capture.\n"; return 2; }
     if (!SDL_Init(SDL_INIT_VIDEO)) { std::cerr << SDL_GetError() << '\n'; return 1; }
     struct Quit { ~Quit() { SDL_Quit(); } } quit;
     using Window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>;
@@ -36,9 +48,25 @@ int main(int argc, char** argv)
     std::filesystem::remove(profilePath);
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); } } cleanup{profilePath};
     std::string error;
-    spyhunter::game::FrontendMenu menu(renderer.get(), argv[1], profilePath);
+    const std::filesystem::path backgroundPath = argc >= 3 ? argv[2] : "";
+    spyhunter::game::FrontendMenu menu(renderer.get(), argv[1], profilePath, backgroundPath);
     if (!menu.load(error)) { std::cerr << error << '\n'; return 1; }
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::profileSelect, "Did not start at profile select.")) return 1;
+    for (int frame = 0; frame < 30; ++frame) { menu.update(); SDL_Delay(10); }
+    menu.render();
+    const auto firstFrameHash = frameHash(renderer.get());
+    if (argc == 4) {
+        SDL_RenderPresent(renderer.get());
+        SDL_Surface* capture = SDL_RenderReadPixels(renderer.get(), nullptr);
+        if (!capture || !SDL_SaveBMP(capture, argv[3])) { std::cerr << SDL_GetError() << '\n'; if (capture) SDL_DestroySurface(capture); return 1; }
+        SDL_DestroySurface(capture);
+    }
+    if (!backgroundPath.empty()) {
+        for (int frame = 0; frame < 20; ++frame) { menu.update(); SDL_Delay(10); }
+        menu.render();
+        if (!require(firstFrameHash != 0 && frameHash(renderer.get()) != firstFrameHash,
+                     "Converted MBACK background did not animate.")) return 1;
+    }
     key(menu, SDLK_UP);
     if (!require(menu.selectedProfile() == 3, "Profile selection did not wrap upward.")) return 1;
     key(menu, SDLK_DOWN);
@@ -52,9 +80,10 @@ int main(int argc, char** argv)
         !require(std::filesystem::exists(profilePath), "Profile file was not created.")) return 1;
     key(menu, SDLK_UP);
     if (!require(menu.selectedMainItem() == 3, "Main-menu selection did not wrap upward.")) return 1;
+    menu.update();
     menu.render();
 
-    spyhunter::game::FrontendMenu reloaded(renderer.get(), argv[1], profilePath);
+    spyhunter::game::FrontendMenu reloaded(renderer.get(), argv[1], profilePath, {});
     if (!reloaded.load(error) || !require(reloaded.profiles()[0] == "SPY1", "Profile did not persist.")) {
         if (!error.empty()) std::cerr << error << '\n';
         return 1;

@@ -22,6 +22,8 @@ The target's 512-byte left and right channel blocks are converted to alternating
 stereo samples before being queued to SDL. The SDL audio queue is refilled incrementally during `update()`. The session
 handles timing and aspect-fit rendering. `Log.GameRuntime=debug` enables open,
 queue, completion, and error diagnostics; `trace` adds refill and frame details.
+Silent, extension-resolved host video and looping are optional; FrontendMenu uses
+that path for the local MBACK conversion without opening an audio device.
 
 `PckArchive.h` exposes a read-only archive index (`open`, `entries`) and a
 bounded `readEntry` method for one serialized resource. It scans PCK metadata
