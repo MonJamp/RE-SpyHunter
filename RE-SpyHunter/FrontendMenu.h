@@ -30,6 +30,7 @@ public:
 private:
     void moveSelection(int direction);
     void accept();
+    void back();
     void appendNameCharacter(char character);
     bool saveProfiles(std::string& error) const;
     void drawCentered(std::string_view text, float yFromBottom, float scale = 1.0f) const;

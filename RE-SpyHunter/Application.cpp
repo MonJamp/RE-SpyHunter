@@ -51,7 +51,8 @@ int runApplication(int argc, char** argv)
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT ||
-                (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE)) running = false;
+                (!frontend && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE))
+                running = false;
             gamepads.handleEvent(event);
             if (event.type != SDL_EVENT_GAMEPAD_BUTTON_DOWN || gamepads.contains(event.gbutton.which)) {
                 if (frontend) frontend->handleEvent(event);

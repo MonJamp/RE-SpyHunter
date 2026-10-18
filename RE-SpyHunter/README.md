@@ -19,4 +19,4 @@ Checks: packed/standalone still loading and failed replacement, invalid console 
 
 Run `prepare-menu-background.ps1` from the solution directory once to convert the original `MOVIES/MBACK.IPU` into ignored `local-assets/MBACK.mp4`; the script defaults to the documented shared FFmpeg installation and prints both hashes. This keeps derived video out of Git and leaves the extracted source unchanged.
 
-Build `Tests/FrontendMenuSmoke.vcxproj` the same way and run `Tests/x64/Debug/FrontendMenuSmoke.exe "<extracted-binaries-root>" "<local-assets/MBACK.mp4>"`. It verifies profile behavior, software rendering, and that two background frames differ. An optional third argument saves the initial frame as BMP. It deletes its temporary profile file after the run.
+Build `Tests/FrontendMenuSmoke.vcxproj` the same way and run `Tests/x64/Debug/FrontendMenuSmoke.exe "<extracted-binaries-root>" "<local-assets/MBACK.mp4>"`. It verifies profile behavior, main-menu Back/re-entry, software rendering, and that two background frames differ. Optional third and fourth output arguments save the profile and main-menu frames as BMPs. It deletes its temporary profile file after the run.

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 
 namespace spyhunter::game
@@ -20,6 +21,13 @@ bool isAccept(const SDL_Event& event)
             (event.key.key == SDLK_RETURN || event.key.key == SDLK_X)) ||
            (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
             event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH);
+}
+
+bool isBack(const SDL_Event& event)
+{
+    return (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE) ||
+           (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+            event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST);
 }
 }
 
@@ -110,15 +118,20 @@ void FrontendMenu::accept()
     status_ = std::string(mainItems[selectedMainItem_]) + " IS NOT YET AVAILABLE";
 }
 
+void FrontendMenu::back()
+{
+    status_.clear();
+    if (screen_ == Screen::mainMenu || screen_ == Screen::nameEntry)
+        screen_ = Screen::profileSelect;
+}
+
 void FrontendMenu::handleEvent(const SDL_Event& event)
 {
+    if (isBack(event)) { back(); return; }
     if (isAccept(event)) { accept(); return; }
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
         if (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP) moveSelection(-1);
         else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) moveSelection(1);
-        else if (screen_ == Screen::nameEntry && event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) {
-            if (!pendingName_.empty()) pendingName_.pop_back();
-        }
         return;
     }
     if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
@@ -142,9 +155,16 @@ void FrontendMenu::drawCentered(std::string_view text, const float yFromBottom, 
 void FrontendMenu::drawHighlight(const float x, const float y, const float width, const float height) const
 {
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 70, 175, 220, 150);
-    const SDL_FRect rectangle{x, y, width, height};
-    SDL_RenderFillRect(renderer_, &rectangle);
+    SDL_SetRenderDrawColor(renderer_, 38, 75, 169, 220);
+    const float radius = height * 0.5f;
+    const SDL_FRect center{x + radius, y, width - height, height};
+    SDL_RenderFillRect(renderer_, &center);
+    for (int row = 0; row < static_cast<int>(height); ++row) {
+        const float dy = static_cast<float>(row) + 0.5f - radius;
+        const float halfWidth = std::sqrt(std::max(0.0f, radius * radius - dy * dy));
+        SDL_RenderLine(renderer_, x + radius - halfWidth, y + static_cast<float>(row),
+                       x + width - radius + halfWidth, y + static_cast<float>(row));
+    }
 }
 
 void FrontendMenu::render() const
@@ -187,16 +207,30 @@ void FrontendMenu::render() const
         drawCentered("TYPE A NAME - BACKSPACE TO ERASE", 105.0f, 0.65f);
         drawCentered("X/ENTER  ACCEPT", 62.0f, 0.65f);
     } else {
-        drawCentered("MAIN MENU", 415.0f);
+        const SDL_Color blue{30, 145, 225, 255};
+        const SDL_Color selected{126, 158, 242, 255};
+        const SDL_Color unselected{2, 20, 44, 255};
+        const SDL_Color gray{180, 190, 200, 255};
+        font_.drawText(renderer_, "AGENT", 10.0f, 415.0f, canvasHeight, 0.72f, blue);
+        font_.drawText(renderer_, profiles_[selectedProfile_], 100.0f, 415.0f, canvasHeight, 0.72f, gray);
+        font_.drawText(renderer_, "OBJECTIVES", 10.0f, 397.0f, canvasHeight, 0.72f, blue);
+        font_.drawText(renderer_, "0", 160.0f, 397.0f, canvasHeight, 0.72f, gray);
+        font_.drawText(renderer_, "MAIN MENU", 473.0f, 415.0f, canvasHeight, 1.0f, blue);
         // Recovered ShMenu0 text anchors: (260,280), (250,240), (240,195), (280,150).
         constexpr std::array<SDL_FPoint, 4> anchors{{{260, 280}, {250, 240}, {240, 195}, {280, 150}}};
         for (std::size_t index = 0; index < mainItems.size(); ++index) {
             const float top = canvasHeight - anchors[index].y - 28.0f;
-            if (index == selectedMainItem_) drawHighlight(anchors[index].x - 80.0f, top, 330.0f, 34.0f);
+            if (index == selectedMainItem_) drawHighlight(230.0f, top + 3.0f, 180.0f, 28.0f);
             font_.drawText(renderer_, mainItems[index], anchors[index].x, anchors[index].y,
-                           canvasHeight, 1.0f);
+                           canvasHeight, 1.0f, index == selectedMainItem_ ? selected : unselected);
         }
-        drawCentered("UP/DOWN  NAVIGATE     X/ENTER  ACCEPT", 18.0f, 0.65f);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 4, 30, 58, 220);
+        const SDL_FRect bottomRail{0, 390, canvasWidth, 52};
+        SDL_RenderFillRect(renderer_, &bottomRail);
+        font_.drawText(renderer_, "+ NAV", 75.0f, 16.0f, canvasHeight, 0.75f, gray);
+        font_.drawText(renderer_, "X ACCEPT", 255.0f, 16.0f, canvasHeight, 0.75f, gray);
+        font_.drawText(renderer_, "^ BACK", 480.0f, 16.0f, canvasHeight, 0.75f, gray);
     }
     if (!status_.empty()) drawCentered(status_, 52.0f, 0.58f);
 }
