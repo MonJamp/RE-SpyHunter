@@ -2,6 +2,10 @@
 
 These small GUI applications help inspect game files and develop the SpyHunter reconstruction.
 
+## FrontendCapture
+
+[`FrontendCapture`](FrontendCapture/README.md) is a small command-line renderer for AI-assisted frontend inspection. It captures the profile, name-entry, or main menu and can save just a header, table, selected row, footer, or exact pixel rectangle. It uses temporary profile state and the same `FrontendMenu` implementation as the game. The behavior checks remain in the separate `FrontendMenuSmoke` project.
+
 ## SH Viewer
 
 `SHViewer` is the single game-file browser and media viewer. It recursively lists every regular file below the configured `ExtractedBinariesPath`, sorted by relative path. It displays standalone `.VKI` stills and plays `.PSS` cutscenes. Clicking a `.PCK` expands a subtree under that row with its member names; selecting a supported `.vki` member displays it in the main area. Other member types are listed as unsupported. Clicking `DATA/AUDIO.MPK` expands its 359 `.vag` and `.mc3` audio entries; selecting one plays it at the sample rate and channel count stored in its own header. The first four MPK entries are IOP support modules and are not shown in the audio list.

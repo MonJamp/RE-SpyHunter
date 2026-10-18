@@ -39,11 +39,12 @@ std::uint64_t frameHash(SDL_Renderer* renderer)
     for (const auto byte : bytes) { hash ^= byte; hash *= 1099511628211ull; }
     return hash;
 }
+
 }
 
 int main(int argc, char** argv)
 {
-    if (argc < 2 || argc > 5) { std::cerr << "Expected extracted-binaries root, optional converted MBACK.mp4, profile BMP, and main-menu BMP.\n"; return 2; }
+    if (argc < 2 || argc > 3) { std::cerr << "Expected extracted-binaries root and optional converted MBACK.mp4.\n"; return 2; }
     if (!SDL_Init(SDL_INIT_VIDEO)) { std::cerr << SDL_GetError() << '\n'; return 1; }
     struct Quit { ~Quit() { SDL_Quit(); } } quit;
     using Window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>;
@@ -63,12 +64,6 @@ int main(int argc, char** argv)
     for (int frame = 0; frame < 30; ++frame) { menu.update(); SDL_Delay(10); }
     menu.render();
     const auto firstFrameHash = frameHash(renderer.get());
-    if (argc >= 4) {
-        SDL_RenderPresent(renderer.get());
-        SDL_Surface* capture = SDL_RenderReadPixels(renderer.get(), nullptr);
-        if (!capture || !SDL_SaveBMP(capture, argv[3])) { std::cerr << SDL_GetError() << '\n'; if (capture) SDL_DestroySurface(capture); return 1; }
-        SDL_DestroySurface(capture);
-    }
     if (!backgroundPath.empty()) {
         for (int frame = 0; frame < 20; ++frame) { menu.update(); SDL_Delay(10); }
         menu.render();
@@ -91,12 +86,6 @@ int main(int argc, char** argv)
     key(menu, SDLK_DOWN);
     menu.update();
     menu.render();
-    if (argc == 5) {
-        SDL_RenderPresent(renderer.get());
-        SDL_Surface* capture = SDL_RenderReadPixels(renderer.get(), nullptr);
-        if (!capture || !SDL_SaveBMP(capture, argv[4])) { std::cerr << SDL_GetError() << '\n'; if (capture) SDL_DestroySurface(capture); return 1; }
-        SDL_DestroySurface(capture);
-    }
     gamepadButton(menu, SDL_GAMEPAD_BUTTON_NORTH);
     if (!require(menu.screen() == spyhunter::game::FrontendMenu::Screen::profileSelect,
                  "Triangle did not return from main menu to profile select.")) return 1;

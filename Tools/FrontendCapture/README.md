@@ -1,0 +1,25 @@
+# FrontendCapture
+
+This command-line inspection tool renders the real `FrontendMenu` with an SDL software renderer and saves only the requested pixels. It is separate from `FrontendMenuSmoke`, which checks behavior. The output is a BMP at native 640 × 448 logical resolution or a smaller crop; no image upscaling is applied. Cropping before saving makes visual inspection cheaper in image tokens and disk space.
+
+Build `FrontendCapture.vcxproj` with x64 MSBuild, or build the solution. From the solution directory:
+
+```powershell
+$capture = '.\Tools\FrontendCapture\x64\Debug\FrontendCapture.exe'
+$assets = 'C:\Users\Filjo\Documents\Reverse Engineering\SpyHunter (2001)\Extracted Binaries'
+& $capture --assets $assets --background '.\local-assets\MBACK.mp4' --screen profile --region selection --output '.\profile-selection.bmp'
+& $capture --assets $assets --background '.\local-assets\MBACK.mp4' --screen profile --filled --region footer --output '.\profile-footer.bmp'
+& $capture --assets $assets --background '.\local-assets\MBACK.mp4' --screen main --selection 2 --rect 225,225,210,54 --output '.\main-item.bmp'
+```
+
+Options:
+
+- `--assets ROOT` and `--output FILE.bmp` are required. The output directory must already exist.
+- `--background MBACK.mp4` uses the prepared animated background. Omit it to inspect UI against the fallback background.
+- `--screen profile|name|main` selects the screen; the default is `profile`.
+- `--selection INDEX` moves the profile or main-menu cursor before rendering (0–2 for profile, 0–3 for main).
+- `--filled` creates a temporary `SPY1` profile so the profile menu shows its progress row and Delete legend. The main-menu screen creates this profile automatically.
+- `--region full|header|table|selection|footer` chooses a useful crop. The default is `full`; `selection` follows the selected row. `--rect x,y,width,height` overrides the named region. Coordinates are pixels from the top-left of the 640 × 448 canvas and must fit inside it.
+- `--time-ms 0..8000` chooses roughly when to sample the background after menu creation; default 100 ms. Media decoding and host timing mean this is a convenient sampling control, not a frame-exact PS2 timestamp.
+
+Each invocation creates and removes an isolated temporary profile directory. It never reads or changes the game's `local-assets/profiles.txt`. It saves one image and prints the selected screen, crop coordinates, and output path. For a focused comparison, request the smallest region containing the UI element; use `full` only when layout context is needed. Captures are native reconstruction evidence, not proof of parity with PCSX2.

@@ -12,6 +12,7 @@
     <Project Path="GUI/GUI.vcxproj" Id="66b6ad5d-08ba-474e-b091-1317863d2b15" />
   </Folder>
   <Folder Name="/Tools/">
+    <Project Path="Tools/FrontendCapture/FrontendCapture.vcxproj" Id="A7FE15DE-528A-457C-9D8D-3EABAA2AD547" />
     <Project Path="Tools/SHViewer/SHViewer.vcxproj" Id="A670DAF7-5E30-4C95-A6AB-4FD4813493A5" />
   </Folder>
 </Solution>
