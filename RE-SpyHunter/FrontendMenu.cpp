@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdio>
 #include <fstream>
 #include <optional>
 #include <span>
@@ -51,6 +52,13 @@ constexpr std::array<FrontendMenu::Screen, 2> controllerDestinations{
     FrontendMenu::Screen::controller1Options, FrontendMenu::Screen::controller2Options};
 constexpr std::array<std::string_view, 3> controllerOptionsLabels{"STANDARD", "REVERSED", "FLIPPED"};
 constexpr std::array<std::string_view, 5> settingsLabels{"SOUND", "FX VOLUME", "MUSIC VOLUME", "VOICE VOLUME", "VIBRATION"};
+constexpr std::array<int, 14> dossierObjectiveCounts{7, 4, 4, 4, 4, 4, 7, 4, 4, 5, 6, 4, 4, 4};
+constexpr float dossierTableX = 45.0f;
+constexpr float dossierFirstRowBaseline = 317.0f;
+// The reference GS frame is 640x480 while this app renders at 640x448.
+constexpr float dossierRowStep = 16.0f;
+constexpr float dossierTimeColumnStep = 250.0f;
+constexpr float dossierObjectivesColumnStep = 340.0f;
 // Source ShMSSSlider enum order, recovered from its draw and cycle helpers.
 constexpr std::array<std::string_view, 4> soundModeLabels{"MONO", "STEREO", "SURROUND", "HEADPHONES"};
 constexpr std::array<std::string_view, 3> briefingLabels{"OBJECTIVES", "WEAPONS", "ENEMIES"};
@@ -131,6 +139,10 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
     if (!menuEmptyBox_.load(menuArchive, "menu_empty_box.rgba", renderer_, error) ||
         !menuFilledBox_.load(menuArchive, "menu_filled_box.rgba", renderer_, error))
         return false;
+    const auto menuUiArchive = root_ / "DATA" / "MENU.PCK";
+    if (!dossierCheckedBox_.load(menuUiArchive, "menu_checkedbox.rgba", renderer_, error) ||
+        !dossierUncheckedBox_.load(menuUiArchive, "menu_uncheckedbox.rgba", renderer_, error))
+        return false;
     if (!profileLightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_lightbar_1pc_long.rgba", renderer_, error))
         return false;
     const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
@@ -172,6 +184,7 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         Screen parent = Screen::systemOptions;
         std::size_t parentSelection = 0;
         switch (*debugStartScreen) {
+        case Screen::dossier: parent = Screen::mainMenu; parentSelection = 3; break;
         case Screen::settings: parentSelection = 0; break;
         case Screen::controller: parentSelection = 1; break;
         case Screen::extras: parentSelection = 2; break;
@@ -179,7 +192,7 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         case Screen::moviePlayer: parent = Screen::extras; parentSelection = 1; break;
         case Screen::cheatGrid: parent = Screen::extras; parentSelection = 2; break;
         default:
-            error = "The debug start screen must be a System Options submenu.";
+            error = "The debug start screen must be a supported frontend submenu.";
             return false;
         }
         if (!debugProfile) {
@@ -187,7 +200,12 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
             return false;
         }
         profileSelection_.select(0);
-        configure(parent, parentSelection);
+        if (parent == Screen::mainMenu) {
+            mainSelection_.select(parentSelection);
+            configure(parent);
+        } else {
+            configure(parent, parentSelection);
+        }
         open(*debugStartScreen);
     }
     error.clear();
@@ -551,7 +569,7 @@ void FrontendMenu::render() const
             : sourceColor(0, 0x3d1ba5e3, 0x3e0d4fdf, 0x3f3f3b64);
         const SDL_Color gray{170, 176, 192, 255};
         const bool settings = screen_ == Screen::settings;
-        if (settings) {
+        if (settings || screen_ == Screen::dossier) {
             // ShMenu::draw renders its 70%-alpha black sprite over this part of MBACK.
             // The source sprite is positioned at (0, 91) with size 640 x 269 in
             // bottom-origin coordinates.
@@ -561,7 +579,7 @@ void FrontendMenu::render() const
         profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 421.0f, canvasHeight, 0.8f, gray);
         profileFont_.drawText(renderer_, "OBJECTIVES", 10.0f, 408.0f, canvasHeight, 0.8f, blue);
         profileFont_.drawText(renderer_, "0", 162.0f, 408.0f, canvasHeight, 0.8f, gray);
-        if (settings) {
+        if (settings || screen_ == Screen::dossier) {
             // ShMenu::draw overlays the shared 512x8 ruler at source sprite
             // positions y=353 and y=86, each stretched to the 640px canvas.
             menuHighlightbar_.draw(renderer_, 0.0f, 87.0f, canvasWidth, 8.0f);
@@ -572,6 +590,9 @@ void FrontendMenu::render() const
             // anchor (500, 415), tinted with MSetupState::mColorLightBlue.
             profileFont_.drawText(renderer_, menuTitle_, 500.0f, 415.0f, canvasHeight, 1.0f,
                                   sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000));
+        } else if (screen_ == Screen::dossier) {
+            profileFont_.drawText(renderer_, menuTitle_, 510.0f, 415.0f, canvasHeight, 1.0f,
+                                  sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000));
         } else {
             const float titleScale = 0.9f;
             font_.drawText(renderer_, menuTitle_, canvasWidth - 15.0f - font_.textAdvance(menuTitle_, titleScale),
@@ -579,15 +600,42 @@ void FrontendMenu::render() const
         }
         const bool carousel = isCarousel(screen_);
         if (screen_ == Screen::dossier) {
-            ui::drawFilledPanel(renderer_, {35, 88, 570, 285}, {0, 0, 0, 190});
-            profileFont_.drawText(renderer_, "MISSION", 50, 350, canvasHeight, 0.8f, titleBlue);
-            profileFont_.drawText(renderer_, "TIME", 405, 350, canvasHeight, 0.8f, titleBlue);
-            profileFont_.drawText(renderer_, "OBJECTIVES", 480, 350, canvasHeight, 0.7f, titleBlue);
+            // ShMenu4 draw uses runtime-tweakable table globals. These anchors are
+            // measured from the supplied 640x480 GS frame after applying its
+            // 480/448 vertical output scale; the source globals aren't stored with
+            // these values in the extracted ELF.
+            constexpr float headingBaseline = dossierFirstRowBaseline + 20.0f;
+            constexpr auto dossierBlue = sourceColor(0x3e54d4d6, 0x3e64e4e6, 0x3edadadc, 0x3f800000);
+            constexpr auto dossierWhite = sourceColor(0x3f4353f8, 0x3f49fbe7, 0x3f5a1cac, 0x3f666666);
+            profileFont_.drawText(renderer_, "MISSION", dossierTableX - 5.0f, headingBaseline,
+                                  canvasHeight, 1.0f, dossierWhite);
+            profileFont_.drawText(renderer_, "TIME", dossierTableX + dossierTimeColumnStep - 5.0f,
+                                  headingBaseline, canvasHeight, 1.0f, dossierWhite);
+            profileFont_.drawText(renderer_, "OBJECTIVES", dossierTableX + dossierObjectivesColumnStep,
+                                  headingBaseline, canvasHeight, 1.0f, dossierWhite);
             for (std::size_t index = 0; index < catalogue::missions.size(); ++index) {
-                const float y = 327.0f - static_cast<float>(index) * 18.0f;
-                profileFont_.drawText(renderer_, catalogue::missions[index], 50, y, canvasHeight, 0.72f, gray);
-                profileFont_.drawText(renderer_, "--:--", 405, y, canvasHeight, 0.72f, gray);
-                profileFont_.drawText(renderer_, "--", 520, y, canvasHeight, 0.72f, gray);
+                const float row = static_cast<float>(index);
+                const float baseline = dossierFirstRowBaseline - row * dossierRowStep;
+                const auto color = index < dossierOpenMissionCount_ ? dossierWhite : dossierBlue;
+                font_.drawText(renderer_, catalogue::missions[index], dossierTableX, baseline,
+                               canvasHeight, 1.0f, color);
+                char timeText[16]{};
+                const auto elapsed = dossierElapsedSeconds_[index];
+                std::snprintf(timeText, sizeof(timeText), "%2d:%02d", elapsed / 60, elapsed % 60);
+                font_.drawText(renderer_, timeText, dossierTableX + dossierTimeColumnStep,
+                               baseline, canvasHeight, 1.0f, color);
+
+                for (int objective = 0; objective < dossierObjectiveCounts[index]; ++objective) {
+                    const float x = dossierTableX + dossierObjectivesColumnStep + 30.0f * objective;
+                    const float y = 428.0f - baseline;
+                    // The retail 32x32 box textures include transparent margins;
+                    // drawing their native size produces the small square outline.
+                    if (dossierObjectives_[index][static_cast<std::size_t>(objective)]) {
+                        constexpr auto completedTint = sourceColor(0x3ee9a027, 0x3ed78d50, 0, 0x3f666666);
+                        dossierCheckedBox_.drawTinted(renderer_, {x, y, 32.0f, 32.0f}, completedTint);
+                    }
+                    dossierUncheckedBox_.draw(renderer_, x, y);
+                }
             }
         }
         if (carousel && screen_ != Screen::cheatGrid) {
@@ -711,12 +759,17 @@ void FrontendMenu::render() const
             }
         }
         ui::drawFilledPanel(renderer_, {0, 407, canvasWidth, 41}, {0, 0, 0, 255});
-        navIcon_.draw(renderer_, 80.0f, 408.0f);
-        acceptIcon_.draw(renderer_, 240.0f, 408.0f);
-        backIcon_.draw(renderer_, 440.0f, 408.0f);
-        font_.drawText(renderer_, "NAV", 120.0f, 15.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "ACCEPT", 280.0f, 15.0f, canvasHeight, 1.0f, gray);
-        font_.drawText(renderer_, "BACK", 480.0f, 15.0f, canvasHeight, 1.0f, gray);
+        if (screen_ == Screen::dossier) {
+            backIcon_.draw(renderer_, 440.0f, 408.0f);
+            font_.drawText(renderer_, "BACK", 480.0f, 15.0f, canvasHeight, 1.0f, gray);
+        } else {
+            navIcon_.draw(renderer_, 80.0f, 408.0f);
+            acceptIcon_.draw(renderer_, 240.0f, 408.0f);
+            backIcon_.draw(renderer_, 440.0f, 408.0f);
+            font_.drawText(renderer_, "NAV", 120.0f, 15.0f, canvasHeight, 1.0f, gray);
+            font_.drawText(renderer_, "ACCEPT", 280.0f, 15.0f, canvasHeight, 1.0f, gray);
+            font_.drawText(renderer_, "BACK", 480.0f, 15.0f, canvasHeight, 1.0f, gray);
+        }
     }
     if (!status_.empty()) drawCentered(status_, 52.0f, 0.58f);
 }

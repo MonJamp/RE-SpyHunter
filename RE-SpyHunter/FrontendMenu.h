@@ -75,6 +75,8 @@ private:
     runtime::PackedTexture menuLightbar_;
     runtime::PackedTexture menuEmptyBox_;
     runtime::PackedTexture menuFilledBox_;
+    runtime::PackedTexture dossierCheckedBox_;
+    runtime::PackedTexture dossierUncheckedBox_;
     runtime::PackedTexture profileLightbar_;
     runtime::CutsceneSession background_;
     bool backgroundLoaded_ = false;
@@ -93,6 +95,9 @@ private:
     std::array<Options, profileCount> options_{};
     Options entryOptions_;
     std::size_t mission_ = 0;
+    std::size_t dossierOpenMissionCount_ = 1;
+    std::array<int, 14> dossierElapsedSeconds_{};
+    std::array<std::array<bool, 7>, 14> dossierObjectives_{};
     std::size_t musicLayout_ = 0;
     ui::MenuAxisRepeat horizontalAxis_{0.95f, 0.6, 0.19};
     ui::MenuAxisRepeat verticalAxis_{0.95f, 0.6, 0.19};
