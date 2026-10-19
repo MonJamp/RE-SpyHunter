@@ -376,9 +376,14 @@ void FrontendMenu::back()
 void FrontendMenu::horizontal(int direction)
 {
     if (screen_ == Screen::settings) {
-        auto& value = options_[profileSelection_.index()].values[submenuSelection_.index()];
-        const int maximum = submenuSelection_.index() == 0 ? 3 : submenuSelection_.index() == 4 ? 1 : 10;
-        value = std::clamp(value + direction, 0, maximum);
+        const auto row = submenuSelection_.index();
+        auto& value = options_[profileSelection_.index()].values[row];
+        if (row == 0 || row == 4) {
+            const int optionCount = row == 0 ? static_cast<int>(soundModeLabels.size()) : 2;
+            value = (value + direction + optionCount) % optionCount;
+        } else {
+            value = std::clamp(value + direction, 0, 10);
+        }
         status_.clear();
     } else if (screen_ == Screen::briefing) {
         submenuSelection_.move(direction);
@@ -652,7 +657,9 @@ void FrontendMenu::render() const
             } else if (screen_ == Screen::settings) {
                 constexpr std::array<float, 5> selectorX{-10, -20, -30, -30, -20};
                 constexpr std::array<float, 5> selectorWidths{220, 280, 350, 350, 280};
-                constexpr float settingsRowTop = 120.0f;
+                // The GS reference places the selector art 6 logical pixels
+                // above the row anchor used by the meter sprites.
+                constexpr float settingsRowTop = 114.0f;
                 constexpr float settingsRowStep = 32.0f;
                 sprite = {selectorX[index], settingsRowTop + settingsRowStep * static_cast<float>(index),
                           selectorWidths[index], 35.0f};
