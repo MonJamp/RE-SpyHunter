@@ -7,6 +7,7 @@
 #include "../GameUI/MenuAxisRepeat.h"
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,7 +24,8 @@ public:
 
     FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& root,
                  std::filesystem::path profilePath, std::filesystem::path backgroundPath);
-    bool load(std::string& error);
+    bool load(std::string& error, bool debugProfile = false,
+              std::optional<Screen> debugStartScreen = std::nullopt);
     void handleEvent(const SDL_Event& event);
     void update();
     void render() const;

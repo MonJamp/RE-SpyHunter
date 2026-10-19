@@ -117,7 +117,8 @@ FrontendMenu::FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& 
     : renderer_(renderer), root_(root), profilePath_(std::move(profilePath)),
       backgroundPath_(std::move(backgroundPath)) {}
 
-bool FrontendMenu::load(std::string& error)
+bool FrontendMenu::load(std::string& error, const bool debugProfile,
+                        const std::optional<Screen> debugStartScreen)
 {
     if (!font_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "Eurobet.vkf", renderer_, error))
         return false;
@@ -160,6 +161,29 @@ bool FrontendMenu::load(std::string& error)
                 if (!(input >> scheme) || scheme > 2) valid = false;
             if (valid) options = loaded;
         }
+    }
+    if (debugProfile) profiles_[0] = "DEBUG";
+    if (debugStartScreen) {
+        Screen parent = Screen::systemOptions;
+        std::size_t parentSelection = 0;
+        switch (*debugStartScreen) {
+        case Screen::settings: parentSelection = 0; break;
+        case Screen::controller: parentSelection = 1; break;
+        case Screen::extras: parentSelection = 2; break;
+        case Screen::musicPlayer: parent = Screen::extras; parentSelection = 0; break;
+        case Screen::moviePlayer: parent = Screen::extras; parentSelection = 1; break;
+        case Screen::cheatGrid: parent = Screen::extras; parentSelection = 2; break;
+        default:
+            error = "The debug start screen must be a System Options submenu.";
+            return false;
+        }
+        if (!debugProfile) {
+            error = "A debug start screen requires the isolated debug profile.";
+            return false;
+        }
+        profileSelection_.select(0);
+        configure(parent, parentSelection);
+        open(*debugStartScreen);
     }
     error.clear();
     return true;

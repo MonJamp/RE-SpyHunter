@@ -17,6 +17,16 @@ The intro borrows a renderer, owns its resources, and must be destroyed before t
 
 The two packed intro stills share one PCK index. A still deliberately decodes one whole image/member to create its texture; video/audio remain incremental. Game-specific ELF offsets and screen placement stay here; the compatibility library receives the console glyph bytes, not a game executable path.
 
+## Debug profile launch
+
+From the solution directory, launch directly into Settings with:
+
+```powershell
+& .\x64\Debug\RE-SpyHunter.exe .\SpyHunter.config --debug-profile --start-screen settings
+```
+
+`--debug-profile` uses the isolated `local-assets/debug-profiles.txt` store and seeds profile 1 as `DEBUG`; it never writes normal `profiles.txt`. `--start-screen` requires that flag, skips the intro and profile picker, and accepts `settings`, `controller`, `extras`, `music`, `movies`, or `cheats`. Back returns to the target's System Options or Extras parent. If `--debug-profile` is used alone, the normal intro and profile picker remain, with the isolated DEBUG profile available there. Changes are saved to the debug store when accepted.
+
 ## Smoke check
 
 Build `Tests/IntroSequenceSmoke.vcxproj` with x64 MSBuild (`/m:1 /nr:false /p:Configuration=Debug /p:Platform=x64`) and run `Tests/x64/Debug/IntroSequenceSmoke.exe "<extracted-binaries-root>"`. The CLI uses shared CLI11 validation; `--help` prints its generated usage. The project is deliberately separate from the normal solution build and needs the same local SDL props. It uses dummy video/audio and a software renderer, so no desktop or physical audio device is used.
