@@ -51,9 +51,8 @@ constexpr std::array<FrontendMenu::Screen, 2> controllerDestinations{
     FrontendMenu::Screen::controller1Options, FrontendMenu::Screen::controller2Options};
 constexpr std::array<std::string_view, 3> controllerOptionsLabels{"STANDARD", "REVERSED", "FLIPPED"};
 constexpr std::array<std::string_view, 5> settingsLabels{"SOUND", "FX VOLUME", "MUSIC VOLUME", "VOICE VOLUME", "VIBRATION"};
-// The source slider permits three sound modes. STEREO is the captured value 0;
-// the other labels remain provisional until the mode enum is recovered.
-constexpr std::array<std::string_view, 3> soundModeLabels{"STEREO", "MONO", "SURROUND"};
+// Source ShMSSSlider enum order, recovered from its draw and cycle helpers.
+constexpr std::array<std::string_view, 4> soundModeLabels{"MONO", "STEREO", "SURROUND", "HEADPHONES"};
 constexpr std::array<std::string_view, 3> briefingLabels{"OBJECTIVES", "WEAPONS", "ENEMIES"};
 constexpr std::array<std::string_view, 2> deleteLabels{"YES", "NO"};
 
@@ -128,6 +127,10 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         return false;
     if (!menuLightbar_.load(root_ / "DATA" / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
         return false;
+    const auto menuArchive = root_ / "DATA" / "SYSTEM.PCK";
+    if (!menuEmptyBox_.load(menuArchive, "menu_empty_box.rgba", renderer_, error) ||
+        !menuFilledBox_.load(menuArchive, "menu_filled_box.rgba", renderer_, error))
+        return false;
     if (!profileLightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_lightbar_1pc_long.rgba", renderer_, error))
         return false;
     const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
@@ -156,7 +159,7 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
             Options loaded;
             bool valid = true;
             for (std::size_t index = 0; index < loaded.values.size(); ++index) {
-                const int maximum = index == 0 ? 2 : index == 4 ? 1 : 10;
+                const int maximum = index == 0 ? 3 : index == 4 ? 1 : 10;
                 if (!(input >> loaded.values[index]) || loaded.values[index] < 0 || loaded.values[index] > maximum) valid = false;
             }
             for (auto& scheme : loaded.controllerSchemes)
@@ -374,7 +377,7 @@ void FrontendMenu::horizontal(int direction)
 {
     if (screen_ == Screen::settings) {
         auto& value = options_[profileSelection_.index()].values[submenuSelection_.index()];
-        const int maximum = submenuSelection_.index() == 0 ? 2 : submenuSelection_.index() == 4 ? 1 : 10;
+        const int maximum = submenuSelection_.index() == 0 ? 3 : submenuSelection_.index() == 4 ? 1 : 10;
         value = std::clamp(value + direction, 0, maximum);
         status_.clear();
     } else if (screen_ == Screen::briefing) {
@@ -626,7 +629,7 @@ void FrontendMenu::render() const
             const float labelScale = carousel ? std::min(1.0f, 490.0f / std::max(1.0f, font_.textAdvance(menuItems_[index], 1.0f))) : 1.0f;
             SDL_FPoint anchor{240.0f, 280.0f - static_cast<float>(index) * itemStep};
             if (carousel) anchor = {(canvasWidth - font_.textAdvance(menuItems_[index], labelScale)) * 0.5f, 250};
-            constexpr std::array<float, 5> settingsBaselines{315, 283, 251, 219, 187};
+            constexpr std::array<float, 5> settingsBaselines{310, 278, 246, 214, 182};
             if (screen_ == Screen::settings) anchor = {50, settingsBaselines[index]};
             SDL_FRect sprite{anchor.x - 25.0f, canvasHeight - anchor.y - 16.0f,
                 font_.textAdvance(menuItems_[index], labelScale) + 50.0f, 22.0f};
@@ -647,9 +650,11 @@ void FrontendMenu::render() const
                 constexpr SDL_FRect bounds[]{{40,90,230,32},{201,90,220,32},{368,90,185,30}};
                 anchor = text[index]; sprite = bounds[index]; originalBounds = true;
             } else if (screen_ == Screen::settings) {
+                constexpr std::array<float, 5> selectorX{-10, -20, -30, -30, -20};
                 constexpr std::array<float, 5> selectorWidths{220, 280, 350, 350, 280};
-                constexpr std::array<float, 5> selectorBottoms{293, 261, 229, 197, 165};
-                sprite = {-10.0f, canvasHeight - selectorBottoms[index] - 35.0f,
+                constexpr float settingsRowTop = 120.0f;
+                constexpr float settingsRowStep = 32.0f;
+                sprite = {selectorX[index], settingsRowTop + settingsRowStep * static_cast<float>(index),
                           selectorWidths[index], 35.0f};
                 originalBounds = true;
             }
@@ -681,24 +686,19 @@ void FrontendMenu::render() const
                                           canvasHeight, 1.0f, valueColor);
                 } else {
                     constexpr float meterX = 270.0f;
-                    constexpr float meterCellSize = 18.0f;
-                    constexpr float meterGap = 7.0f;
-                    constexpr float meterBaselineOffset = 16.0f;
-                    const float meterBottom = anchor.y - meterBaselineOffset;
-                    const float meterTop = canvasHeight - meterBottom - meterCellSize;
+                    constexpr float meterCellSize = 20.0f;
+                    constexpr float meterPitch = 25.0f;
+                    constexpr float settingsRowTop = 120.0f;
+                    constexpr float settingsRowStep = 32.0f;
+                    const float meterTop = settingsRowTop + settingsRowStep * static_cast<float>(index);
+                    constexpr auto emptyTint = sourceColor(0x3e54d4d6, 0x3e64e4e6, 0x3edadadc, 0x3f800000);
+                    constexpr auto filledTint = sourceColor(0x3ee9a027, 0x3ed78d50, 0x00000000, 0x3f666666);
                     for (int cell = 0; cell < 10; ++cell) {
-                        const SDL_FRect cellRect{meterX + cell * (meterCellSize + meterGap), meterTop,
+                        const SDL_FRect cellRect{meterX + cell * meterPitch, meterTop,
                                                  meterCellSize, meterCellSize};
-                        SDL_SetRenderDrawColor(renderer_, 11, 30, 65, 255);
-                        SDL_RenderFillRect(renderer_, &cellRect);
-                        SDL_SetRenderDrawColor(renderer_, 36, 62, 112, 255);
-                        SDL_RenderRect(renderer_, &cellRect);
-                        if (cell < value) {
-                            const SDL_FRect fillRect{cellRect.x + 3.0f, cellRect.y + 3.0f,
-                                cellRect.w - 6.0f, cellRect.h - 6.0f};
-                            SDL_SetRenderDrawColor(renderer_, 218, 179, 0, 255);
-                            SDL_RenderFillRect(renderer_, &fillRect);
-                        }
+                        menuEmptyBox_.drawTinted(renderer_, cellRect, emptyTint);
+                        if (cell < value)
+                            menuFilledBox_.drawTinted(renderer_, cellRect, filledTint);
                     }
                 }
             }

@@ -40,7 +40,9 @@ public:
     const std::string& pendingName() const { return pendingName_; }
     const std::string& status() const { return status_; }
     struct Options {
-        std::array<int, 5> values{0, 10, 10, 10, 1};
+        // Initial local profile values mirror the latest Settings reference;
+        // they are not asserted as the original game's fresh-profile defaults.
+        std::array<int, 5> values{1, 10, 7, 10, 1};
         std::array<std::size_t, 2> controllerSchemes{};
         bool operator==(const Options&) const = default;
     };
@@ -71,6 +73,8 @@ private:
     runtime::PackedTexture backIcon_;
     runtime::PackedTexture menuHighlightbar_;
     runtime::PackedTexture menuLightbar_;
+    runtime::PackedTexture menuEmptyBox_;
+    runtime::PackedTexture menuFilledBox_;
     runtime::PackedTexture profileLightbar_;
     runtime::CutsceneSession background_;
     bool backgroundLoaded_ = false;
