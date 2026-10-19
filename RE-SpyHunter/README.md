@@ -1,6 +1,6 @@
 # Main game structure
 
-The source-derived [frontend menu requirements](../docs/frontend-menu-requirements.md)
+The source-derived [frontend menu requirements](../../../docs/frontend-menu-requirements.md)
 document the original hierarchy, navigation and selection commands. The current
 native hierarchy now follows that baseline; the implementation-status section
 records remaining gameplay/media, progress and presentation boundaries.
@@ -26,3 +26,4 @@ Checks: packed/standalone still loading and failed replacement, invalid console 
 Run `prepare-menu-background.ps1` from the solution directory once to convert the original `MOVIES/MBACK.IPU` into ignored `local-assets/MBACK.mp4`; the script defaults to the documented shared FFmpeg installation and prints both hashes. This keeps derived video out of Git and leaves the extracted source unchanged. The native submenu tree is documented as code/string evidence in the [frontend property audit](../../../docs/intro-property-audit.md#main-menu-0).
 
 Build `Tests/FrontendMenuSmoke.vcxproj` the same way and run `Tests/x64/Debug/FrontendMenuSmoke.exe "<extracted-binaries-root>" --background "<local-assets/MBACK.mp4>"`. It verifies profile behavior, all implemented menu branches and parent Back navigation, software rendering, and that two background frames differ. It deletes its temporary profile file after the run. Use `--help` for the shared CLI11-generated usage, or use the separate [FrontendCapture](../Tools/FrontendCapture/README.md) project to save full or cropped UI images.
+
