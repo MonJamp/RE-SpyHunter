@@ -124,6 +124,8 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         return false;
     if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
         return false;
+    if (!menuHighlightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_highlightbar.rgba", renderer_, error))
+        return false;
     if (!menuLightbar_.load(root_ / "DATA" / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
         return false;
     if (!profileLightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_lightbar_1pc_long.rgba", renderer_, error))
@@ -540,13 +542,33 @@ void FrontendMenu::render() const
             ? sourceColor(0x3deb50b1, 0x3e28db8c, 0x3e9a9fbe, 0x3f666666)
             : sourceColor(0, 0x3d1ba5e3, 0x3e0d4fdf, 0x3f3f3b64);
         const SDL_Color gray{170, 176, 192, 255};
+        const bool settings = screen_ == Screen::settings;
+        if (settings) {
+            // ShMenu::draw renders its 70%-alpha black sprite over this part of MBACK.
+            // The source sprite is positioned at (0, 91) with size 640 x 269 in
+            // bottom-origin coordinates.
+            ui::drawFilledPanel(renderer_, {0.0f, 88.0f, canvasWidth, 269.0f}, {0, 0, 0, 178});
+        }
         profileFont_.drawText(renderer_, "AGENT", 10.0f, 421.0f, canvasHeight, 0.8f, blue);
         profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100.0f, 421.0f, canvasHeight, 0.8f, gray);
         profileFont_.drawText(renderer_, "OBJECTIVES", 10.0f, 408.0f, canvasHeight, 0.8f, blue);
         profileFont_.drawText(renderer_, "0", 162.0f, 408.0f, canvasHeight, 0.8f, gray);
-        const float titleScale = 0.9f;
-        font_.drawText(renderer_, menuTitle_, canvasWidth - 15.0f - font_.textAdvance(menuTitle_, titleScale),
-                       415.0f, canvasHeight, titleScale, titleBlue);
+        if (settings) {
+            // ShMenu::draw overlays the shared 512x8 ruler at source sprite
+            // positions y=353 and y=86, each stretched to the 640px canvas.
+            menuHighlightbar_.draw(renderer_, 0.0f, 87.0f, canvasWidth, 8.0f);
+            menuHighlightbar_.draw(renderer_, 0.0f, 354.0f, canvasWidth, 8.0f);
+        }
+        if (settings) {
+            // ShMenu6 uses the shared Euro12Font title object, at the source draw
+            // anchor (500, 415), tinted with MSetupState::mColorLightBlue.
+            profileFont_.drawText(renderer_, menuTitle_, 500.0f, 415.0f, canvasHeight, 1.0f,
+                                  sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000));
+        } else {
+            const float titleScale = 0.9f;
+            font_.drawText(renderer_, menuTitle_, canvasWidth - 15.0f - font_.textAdvance(menuTitle_, titleScale),
+                           415.0f, canvasHeight, titleScale, titleBlue);
+        }
         const bool carousel = isCarousel(screen_);
         if (screen_ == Screen::dossier) {
             ui::drawFilledPanel(renderer_, {35, 88, 570, 285}, {0, 0, 0, 190});
@@ -627,7 +649,7 @@ void FrontendMenu::render() const
             } else if (screen_ == Screen::settings) {
                 constexpr std::array<float, 5> selectorWidths{220, 280, 350, 350, 280};
                 constexpr std::array<float, 5> selectorBottoms{293, 261, 229, 197, 165};
-                sprite = {30.0f, canvasHeight - selectorBottoms[index] - 35.0f,
+                sprite = {-10.0f, canvasHeight - selectorBottoms[index] - 35.0f,
                           selectorWidths[index], 35.0f};
                 originalBounds = true;
             }
@@ -638,8 +660,8 @@ void FrontendMenu::render() const
             }
             const bool selectedSettingsRow = index == submenuSelection_.index();
             if (screen_ == Screen::settings) {
-                const SDL_Color settingsOn{112, 151, 255, 255};
-                const SDL_Color settingsOff{45, 67, 111, 255};
+                constexpr auto settingsOn = sourceColor(0x3ecf0069, 0x3f0c8b44, 0x3f800000, 0x3f666666);
+                constexpr auto settingsOff = sourceColor(0x3deb50b1, 0x3e28db8c, 0x3e9a9fbe, 0x3f666666);
                 profileFont_.drawText(renderer_, menuItems_[index], anchor.x, anchor.y, canvasHeight, 1.0f,
                                       selectedSettingsRow ? settingsOn : settingsOff);
             } else {
@@ -649,7 +671,8 @@ void FrontendMenu::render() const
             if (screen_ == Screen::settings) {
                 const auto value = options().values[index];
                 const SDL_Color valueColor = selectedSettingsRow
-                    ? SDL_Color{112, 151, 255, 255} : SDL_Color{47, 65, 103, 255};
+                    ? sourceColor(0x3ecf0069, 0x3f0c8b44, 0x3f800000, 0x3f666666)
+                    : sourceColor(0x3deb50b1, 0x3e28db8c, 0x3e9a9fbe, 0x3f666666);
                 if (index == 0) {
                     profileFont_.drawText(renderer_, soundModeLabels[static_cast<std::size_t>(value)],
                                           270, anchor.y, canvasHeight, 1.0f, valueColor);
@@ -658,15 +681,14 @@ void FrontendMenu::render() const
                                           canvasHeight, 1.0f, valueColor);
                 } else {
                     constexpr float meterX = 270.0f;
-                    constexpr float meterCellWidth = 14.0f;
-                    constexpr float meterCellHeight = 18.0f;
-                    constexpr float meterGap = 8.0f;
+                    constexpr float meterCellSize = 18.0f;
+                    constexpr float meterGap = 7.0f;
                     constexpr float meterBaselineOffset = 16.0f;
                     const float meterBottom = anchor.y - meterBaselineOffset;
-                    const float meterTop = canvasHeight - meterBottom - meterCellHeight;
+                    const float meterTop = canvasHeight - meterBottom - meterCellSize;
                     for (int cell = 0; cell < 10; ++cell) {
-                        const SDL_FRect cellRect{meterX + cell * (meterCellWidth + meterGap), meterTop,
-                                                 meterCellWidth, meterCellHeight};
+                        const SDL_FRect cellRect{meterX + cell * (meterCellSize + meterGap), meterTop,
+                                                 meterCellSize, meterCellSize};
                         SDL_SetRenderDrawColor(renderer_, 11, 30, 65, 255);
                         SDL_RenderFillRect(renderer_, &cellRect);
                         SDL_SetRenderDrawColor(renderer_, 36, 62, 112, 255);

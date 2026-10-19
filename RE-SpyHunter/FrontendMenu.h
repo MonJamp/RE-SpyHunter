@@ -69,6 +69,7 @@ private:
     runtime::PackedTexture acceptIcon_;
     runtime::PackedTexture deleteIcon_;
     runtime::PackedTexture backIcon_;
+    runtime::PackedTexture menuHighlightbar_;
     runtime::PackedTexture menuLightbar_;
     runtime::PackedTexture profileLightbar_;
     runtime::CutsceneSession background_;
