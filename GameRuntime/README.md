@@ -28,8 +28,10 @@ that path for the local MBACK conversion without opening an audio device.
 `PckArchive.h` exposes a read-only archive index (`open`, `entries`) and a
 bounded `readEntry` method for one serialized resource. It scans PCK metadata
 in 64 KiB blocks without loading every resource body. Entry boundaries are
-inferred from the next validated header. `VkiImage.h` decodes standalone VKIs
-and supported VKI members read from a PCK.
+inferred from the next validated header. Entries retain both the internal
+member name and, when present, the length-prefixed load path preceding the
+record. `VkiImage.h` decodes standalone VKIs and supported VKI members read
+from a PCK.
 
 `RgbaImage.h` decodes serialized `vkDMATexture` `.rgba`/`.rgb` resources from
 bytes or a standalone file. It follows the original version-dependent reader

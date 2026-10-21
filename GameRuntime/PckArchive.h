@@ -11,6 +11,9 @@ namespace spyhunter::runtime
 struct PckEntry
 {
     std::string name;
+    // Path requested by the game's archive loader immediately before this record.
+    // Some valid records have no filename-like field in their serialized header.
+    std::string loadName;
     std::string type;
     std::uint64_t offset = 0;
     std::uint64_t size = 0;
