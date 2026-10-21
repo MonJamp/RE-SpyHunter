@@ -10,7 +10,7 @@ RE::SpyHunter is a native reconstruction of the PlayStation 2 game SpyHunter (20
 - [`PS2Compatibility`](PS2Compatibility/README.md) is the separate library for reconstructed PS2 SDK/hardware-facing services, initially developer-console glyph rendering. It does not depend on GameRuntime.
 - [`Configuration`](Configuration/Configuration.vcxproj) loads local paths and logging settings shared by the executables.
 - [`GUI`](GUI/README.md) provides shared SDL3 presentation helpers.
-- [`Tools`](Tools/README.md) contains focused applications for inspecting game files, including SH Viewer. Tool controls and behavior are documented there.
+- [`Tools`](Tools/README.md) contains focused applications for inspecting game files, including SH Viewer with an embedded `ModelViewerControl`. Tool controls and behavior are documented there.
 
 The solution uses C++20, Visual Studio, and SDL3. Build and local configuration instructions are in [BUILDING.md](BUILDING.md).
 

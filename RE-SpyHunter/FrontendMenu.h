@@ -5,6 +5,7 @@
 #include "../GameRuntime/StillTexture.h"
 #include "../GameRuntime/VkfTextureFont.h"
 #include "MissionLevelLoading.h"
+#include "../GameRuntime/TrackPreviewRenderer.h"
 #include "../GameUI/MenuSelection.h"
 #include "../GameUI/MenuAxisRepeat.h"
 #include "../GameUI/AlphaClipMask.h"
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -78,6 +80,7 @@ private:
     void cancelMissionLoad();
     void drawMissionLoading() const;
     void drawMissionLevelPreview() const;
+    bool prepareMissionLevelPreview(std::string& error);
     bool saveProfiles(std::string& error) const;
     void drawCentered(std::string_view text, float yFromBottom, float scale = 1.0f) const;
 
@@ -149,6 +152,9 @@ private:
     bool missionLoadFinished_ = false;
     bool missionLoadSucceeded_ = false;
     std::optional<runtime::TrackGeometryImport> missionTrack_;
+    struct SdlTextureDeleter { void operator()(SDL_Texture* texture) const { if (texture) SDL_DestroyTexture(texture); } };
+    std::unique_ptr<SDL_Texture, SdlTextureDeleter> missionTrackPreviewTexture_;
+    runtime::TrackPreviewStats missionTrackPreviewStats_;
     // Declared last so it is joined before the callback state above is destroyed.
     std::jthread missionLoadWorker_;
 };

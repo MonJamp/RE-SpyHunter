@@ -243,6 +243,7 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
     }
     result.archivePath = archivePath.string();
     result.memberName = entry.loadName;
+    result.memberOffset = entry.offset;
     result.bspVersion = static_cast<std::uint32_t>(version);
 
     if (!readCount(input, maximumNodes, result.nodes, "BSP node", error) || !skipArray(input, result.nodes, 40, error)) return false;
@@ -294,6 +295,7 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
         std::uint64_t verticesInLeaf = 0;
         result.batches += batchCount;
         for (std::uint32_t batch = 0; batch < batchCount; ++batch) {
+            const auto batchOffset = input.position();
             std::int16_t texture = 0;
             std::uint32_t vertexCount = 0, stripCount = 0;
             if (!input.i16(texture, error) || texture < 0 || static_cast<std::uint32_t>(texture) >= textureCount ||
@@ -309,6 +311,7 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
                 candidate.batch = batch;
                 candidate.texture = texture;
                 candidate.textureName = textureNames[static_cast<std::size_t>(texture)];
+                candidate.batchOffset = batchOffset;
                 candidate.vertices.reserve(vertexCount);
                 candidate.stripLengths.reserve(stripCount);
             }
@@ -328,6 +331,7 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
                 error = "Strip lengths do not sum to batch vertex count at leaf " + std::to_string(leaf) + ", batch " + std::to_string(batch) + ".";
                 return false;
             }
+            if (retain) candidate.vertexDataOffset = input.position();
             verticesInLeaf += vertexCount;
             result.vertices += vertexCount;
             for (std::uint32_t vertex = 0; vertex < vertexCount; ++vertex) {
@@ -384,6 +388,43 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
         return false;
     }
     result.parsedArchiveOffset = entry.offset + input.position() - static_cast<std::uint64_t>(nextNameLength) - 4;
+    return true;
+}
+
+bool loadPg1TrackMesh(const std::filesystem::path& archivePath, const PckEntry& entry,
+                      const TrackLoadOptions& options, TrackMesh& result, std::string& error)
+{
+    result = {};
+    TrackGeometryImport imported;
+    if (entry.type != "vkTrack" || entry.serializationVersion != 0x03000055) {
+        error = "Unsupported track member; SH Viewer expects the observed PG1 vkTrack 3.0.85 fixture.";
+        return false;
+    }
+    if (options.maxNodes < 1 || options.maxNodes > maximumNodes ||
+        options.maxLeaves < 1 || options.maxLeaves > maximumLeaves ||
+        options.maxTextures < 1 || options.maxTextures > maximumTextures ||
+        options.maxBatchesPerLeaf < 1 || options.maxBatchesPerLeaf > maximumBatchesPerLeaf ||
+        options.maxVerticesPerBatch < 1 || options.maxVerticesPerBatch > maximumVerticesPerBatch) {
+        error = "SH Viewer track limits are outside the track reader's supported safety bounds.";
+        return false;
+    }
+    if (!importTrackBatch(archivePath, entry.loadName, options.leafIndex, options.batchIndex, {}, imported, error)) return false;
+    if (imported.selected.vertices.size() * sizeof(TrackVertex) > options.maxDecodedBytes) {
+        error = "Selected mesh exceeds SH Viewer configured decoded-memory limit.";
+        return false;
+    }
+    result.archivePath = imported.archivePath;
+    result.memberName = imported.memberName;
+    result.memberOffset = imported.memberOffset;
+    result.bspVersion = imported.bspVersion;
+    result.leafIndex = imported.selected.leaf;
+    result.batchIndex = imported.selected.batch;
+    result.textureIndex = imported.selected.texture;
+    result.textureName = imported.selected.textureName;
+    result.batchOffset = imported.selected.batchOffset;
+    result.vertexDataOffset = imported.selected.vertexDataOffset;
+    result.vertices = std::move(imported.selected.vertices);
+    result.stripLengths = std::move(imported.selected.stripLengths);
     return true;
 }
 }

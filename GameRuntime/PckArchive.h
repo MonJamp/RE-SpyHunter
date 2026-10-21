@@ -16,6 +16,7 @@ struct PckEntry
     // Some valid records have no filename-like field in their serialized header.
     std::string loadName;
     std::string type;
+    std::uint32_t serializationVersion = 0;
     std::uint64_t offset = 0;
     std::uint64_t size = 0;
 };

@@ -2,6 +2,7 @@
 #include "FrontendCatalogue.h"
 #include "../GameUI/MenuDrawing.h"
 #include "../GameRuntime/PckArchive.h"
+#include "../GameRuntime/TrackPreviewRenderer.h"
 
 #include <algorithm>
 #include <bit>
@@ -358,21 +359,34 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
 
 void FrontendMenu::update()
 {
-    if (backgroundLoaded_ && screen_ != Screen::missionLoading) background_.update();
+    if (backgroundLoaded_ && screen_ != Screen::missionLoading && screen_ != Screen::levelPreview) background_.update();
     if (screen_ == Screen::missionLoading) {
-        std::lock_guard lock(missionLoadMutex_);
-        std::string label;
-        switch (missionLoadStage_) {
-        case MissionLoadStage::staticArchive: label = "READING STATIC ARCHIVE"; break;
-        case MissionLoadStage::staticLevelData: label = "READING WATER DATA"; break;
-        case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
-        case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
-        case MissionLoadStage::trackGeometry: label = "BUILDING TRACK GEOMETRY"; break;
+        bool preparePreview = false;
+        {
+            std::lock_guard lock(missionLoadMutex_);
+            std::string label;
+            switch (missionLoadStage_) {
+            case MissionLoadStage::staticArchive: label = "READING STATIC ARCHIVE"; break;
+            case MissionLoadStage::staticLevelData: label = "READING WATER DATA"; break;
+            case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
+            case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
+            case MissionLoadStage::trackGeometry: label = "BUILDING TRACK GEOMETRY"; break;
+            }
+            status_ = missionLoadFinished_ ?
+                (missionLoadSucceeded_ ? "TRACK IMPORT COMPLETE; BUILDING DEPTH VIEW" : missionLoadError_) :
+                (missionLoadItem_.empty() ? label : label + " - " + missionLoadItem_);
+            preparePreview = missionLoadFinished_ && missionLoadSucceeded_ && missionTrack_ && !missionTrackPreviewTexture_;
         }
-        status_ = missionLoadFinished_ ?
-            (missionLoadSucceeded_ ? "TRACK IMPORT COMPLETE; DIAGNOSTIC VIEW READY" : missionLoadError_) :
-            (missionLoadItem_.empty() ? label : label + " - " + missionLoadItem_);
-        if (missionLoadFinished_ && missionLoadSucceeded_ && missionTrack_) screen_ = Screen::levelPreview;
+        if (preparePreview) {
+            std::string previewError;
+            if (prepareMissionLevelPreview(previewError)) screen_ = Screen::levelPreview;
+            else {
+                std::lock_guard lock(missionLoadMutex_);
+                missionLoadSucceeded_ = false;
+                missionLoadError_ = std::move(previewError);
+                status_ = missionLoadError_;
+            }
+        }
         return;
     }
     const auto nowMs = SDL_GetTicks();
@@ -556,6 +570,8 @@ void FrontendMenu::startMissionLoad()
         missionLoadFinished_ = false;
         missionLoadSucceeded_ = false;
         missionTrack_.reset();
+        missionTrackPreviewTexture_.reset();
+        missionTrackPreviewStats_ = {};
     }
     open(Screen::missionLoading);
     const auto extractedRoot = missionLoadRoot_.empty() ? root_ : missionLoadRoot_;
@@ -685,50 +701,36 @@ void FrontendMenu::drawMissionLoading() const
     }
 }
 
+bool FrontendMenu::prepareMissionLevelPreview(std::string& error)
+{
+    if (!missionTrack_) { error = "Track geometry is unavailable for the depth view."; return false; }
+    runtime::TrackPreviewRenderer previewRenderer;
+    std::vector<std::uint8_t> pixels;
+    if (!previewRenderer.render(missionTrack_->selected, static_cast<std::uint32_t>(canvasWidth),
+                                static_cast<std::uint32_t>(canvasHeight), pixels,
+                                missionTrackPreviewStats_, error)) return false;
+    std::unique_ptr<SDL_Texture, SdlTextureDeleter> texture(SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_STATIC, static_cast<int>(canvasWidth), static_cast<int>(canvasHeight)));
+    if (!texture) { error = "Could not create level preview texture: " + std::string(SDL_GetError()); return false; }
+    if (!SDL_UpdateTexture(texture.get(), nullptr, pixels.data(), static_cast<int>(canvasWidth) * 4) ||
+        !SDL_SetTextureScaleMode(texture.get(), SDL_SCALEMODE_NEAREST) ||
+        !SDL_SetTextureBlendMode(texture.get(), SDL_BLENDMODE_NONE)) {
+        error = "Could not upload the software depth image: " + std::string(SDL_GetError());
+        return false;
+    }
+    missionTrackPreviewTexture_ = std::move(texture);
+    return true;
+}
+
 void FrontendMenu::drawMissionLevelPreview() const
 {
     SDL_SetRenderDrawColor(renderer_, 4, 8, 13, 255);
     SDL_RenderClear(renderer_);
-    if (!missionTrack_ || missionTrack_->selected.vertices.empty()) return;
-
-    const auto& mesh = missionTrack_->selected;
-    std::array<float, 2> minimum{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
-    std::array<float, 2> maximum{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
-    for (const auto& vertex : mesh.vertices) {
-        minimum[0] = (std::min)(minimum[0], vertex.position[0]);
-        minimum[1] = (std::min)(minimum[1], vertex.position[1]);
-        maximum[0] = (std::max)(maximum[0], vertex.position[0]);
-        maximum[1] = (std::max)(maximum[1], vertex.position[1]);
-    }
-    const float width = (std::max)(maximum[0] - minimum[0], 0.001f);
-    const float height = (std::max)(maximum[1] - minimum[1], 0.001f);
-    const float scale = (std::min)(576.0f / width, 320.0f / height);
-    const float left = (canvasWidth - width * scale) * 0.5f;
-    const float top = (canvasHeight - height * scale) * 0.5f;
-
-    std::vector<SDL_Vertex> vertices;
-    std::vector<int> indices;
-    vertices.reserve(mesh.triangles.size() * 3);
-    indices.reserve(mesh.triangles.size() * 3);
-    for (const auto& triangle : mesh.triangles) {
-        for (const auto sourceIndex : triangle.vertices) {
-            const auto& source = mesh.vertices[sourceIndex];
-            SDL_Vertex vertex{};
-            vertex.position = {left + (source.position[0] - minimum[0]) * scale,
-                               top + (maximum[1] - source.position[1]) * scale};
-            vertex.color = {
-                static_cast<float>((std::min)(255, int(source.color[0]) * 2)) / 255.0f,
-                static_cast<float>((std::min)(255, int(source.color[1]) * 2)) / 255.0f,
-                static_cast<float>((std::min)(255, int(source.color[2]) * 2)) / 255.0f, 1.0f};
-            vertices.push_back(vertex);
-            indices.push_back(static_cast<int>(indices.size()));
-        }
-    }
-    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()),
-                       indices.data(), static_cast<int>(indices.size()));
+    if (missionTrackPreviewTexture_)
+        SDL_RenderTexture(renderer_, missionTrackPreviewTexture_.get(), nullptr, nullptr);
     constexpr SDL_Color labelColor{160, 189, 216, 255};
     font_.drawText(renderer_, "MISSION 1 TRACK INSPECTION - LEAF 74 / BATCH 5", 18, 24, canvasHeight, 0.72f, labelColor);
-    font_.drawText(renderer_, "TOP-DOWN DIAGNOSTIC | DEPTH AND ORIGINAL MATERIAL NOT IMPLEMENTED",
+    font_.drawText(renderer_, "SOFTWARE PERSPECTIVE / DEPTH | ORIGINAL MATERIAL NOT IMPLEMENTED",
                    18, 8, canvasHeight, 0.58f, labelColor);
 }
 

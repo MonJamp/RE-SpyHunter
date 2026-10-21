@@ -69,6 +69,7 @@ bool parseEntry(std::ifstream& stream, const std::uint64_t offset, const std::ui
     }
     if (!readString(stream, entry.type, 128) ||
         !read32(stream, entryVersion) || (entryVersion & 0xff000000) != 0x03000000) return false;
+    entry.serializationVersion = entryVersion;
     const auto nameRegion = stream.tellg();
     if (nameRegion < 0) return false;
     bool foundName = false;

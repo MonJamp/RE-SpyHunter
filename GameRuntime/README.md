@@ -33,6 +33,15 @@ member name and, when present, the length-prefixed load path preceding the
 record. `VkiImage.h` decodes standalone VKIs and supported VKI members read
 from a PCK.
 
+`TrackGeometry.h` reads the observed PG1 track through bounded 64 KiB windows,
+validates resource structure and the full leaf/batch census, and retains one
+selected batch with source positions, colors, UVs and strip topology. Both the
+level diagnostic and SH Viewer use this importer. `TrackPreviewRenderer.h`
+provides a bounded CPU perspective rasterizer with near/far clipping and a
+Z-buffer for that diagnostic; SDL remains the window presenter. Its fixed host
+camera and vertex-color output are inspection tools, not original material or
+camera emulation.
+
 `RgbaImage.h` decodes serialized `vkDMATexture` `.rgba`/`.rgb` resources from
 bytes or a standalone file. It follows the original version-dependent reader
 for palettes and mip data, supporting PSMT4, PSMT8, PSMCT32 and RGB5A1
