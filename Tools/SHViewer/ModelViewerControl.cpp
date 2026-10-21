@@ -7,6 +7,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,8 @@ namespace
 struct ProjectedVertex { SDL_FPoint point{}; float depth = 0.0f; SDL_Color color{}; };
 struct Triangle { std::array<ProjectedVertex, 3> vertices{}; float depth = 0.0f; };
 
-SDL_FPoint project(const runtime::TrackVertex& source, const std::array<float, 3>& center,
+template<typename Vertex>
+SDL_FPoint project(const Vertex& source, const std::array<float, 3>& center,
                    const float scale, const SDL_FRect& viewport, const float yaw)
 {
     const float x = source.position[0] - center[0];
@@ -31,7 +33,8 @@ SDL_FPoint project(const runtime::TrackVertex& source, const std::array<float, 3
             viewport.y + viewport.h * 0.52f + (rx + ry) * 0.35355339f * scale - z * 0.8660254f * scale};
 }
 
-void renderTrack(SDL_Renderer* renderer, const runtime::TrackMesh& mesh, const SDL_FRect& viewport,
+template<typename Mesh>
+void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& viewport,
                  const bool wireframe, const bool vertexColors, const bool showBounds,
                  const bool showVertices, const float yaw, const float zoom)
 {
@@ -118,7 +121,8 @@ void renderTrack(SDL_Renderer* renderer, const runtime::TrackMesh& mesh, const S
     }
 }
 
-std::size_t triangleSlots(const runtime::TrackMesh& mesh)
+template<typename Mesh>
+std::size_t triangleSlots(const Mesh& mesh)
 {
     std::size_t count = 0;
     for (const auto length : mesh.stripLengths) count += length - 2;
@@ -160,7 +164,8 @@ struct MeshDiagnostics
     std::size_t degenerateTriangles = 0;
 };
 
-MeshDiagnostics diagnose(const runtime::TrackMesh& mesh)
+template<typename Mesh>
+MeshDiagnostics diagnose(const Mesh& mesh)
 {
     MeshDiagnostics result;
     result.minimum = result.maximum = mesh.vertices.front().position;
@@ -204,6 +209,8 @@ void ModelViewerControl::clear()
 {
     active_ = false;
     mesh_.reset();
+    model_.reset();
+    selectedDrawable_ = 0;
     status_.clear();
     resourceSummary_.clear();
     yaw_ = 0.0f;
@@ -221,6 +228,18 @@ bool ModelViewerControl::openTrack(const std::filesystem::path& archivePath, con
     mesh_ = std::move(mesh);
     active_ = true;
     status_ = "PG1 track fixture loaded; diagnostic host view.";
+    return true;
+}
+
+bool ModelViewerControl::openVkModel(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
+                                     const runtime::VkModelLoadOptions& options, std::string& error)
+{
+    clear();
+    runtime::VkModelGeometry model;
+    if (!runtime::loadVkModelGeometry(archivePath, entry, options, model, error)) return false;
+    model_ = std::move(model);
+    active_ = true;
+    status_ = "Raw vkPS2TriStrips geometry loaded; model hierarchy transforms and shaders are not applied.";
     return true;
 }
 
@@ -289,6 +308,73 @@ bool ModelViewerControl::writeGeometryDebugJson(const std::filesystem::path& out
     return true;
 }
 
+bool ModelViewerControl::writeVkModelDebugJson(const std::filesystem::path& outputPath, std::string& error) const
+{
+    error.clear();
+    if (!model_ || model_->drawables.empty()) {
+        error = "No decoded vkModel geometry is available to export.";
+        return false;
+    }
+    std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        error = "Could not open vkModel debug JSON output path: " + outputPath.string();
+        return false;
+    }
+    output << std::setprecision(9)
+        << "{\n  \"format\": \"SHViewer vkModel geometry debug v1\",\n"
+        << "  \"interpretation\": \"observed vkPS2TriStrips versioned streams; raw local drawable geometry\",\n"
+        << "  \"archive\": " << jsonString(model_->archivePath) << ",\n"
+        << "  \"member\": " << jsonString(model_->memberName) << ",\n"
+        << "  \"member_offset\": " << model_->memberOffset << ",\n"
+        << "  \"member_size\": " << model_->memberSize << ",\n"
+        << "  \"model_version\": " << jsonString(std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
+            std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff)) << ",\n"
+        << "  \"node_transforms_applied\": false,\n  \"shader_texture_resolved\": false,\n"
+        << "  \"unsupported_drawable_records\": " << model_->unsupportedDrawableRecords << ",\n"
+        << "  \"drawables\": [\n";
+    for (std::size_t d = 0; d < model_->drawables.size(); ++d) {
+        const auto& drawable = model_->drawables[d];
+        output << "    {\"object_index\": " << drawable.objectIndex
+            << ", \"serialization_version\": " << jsonString(std::to_string((drawable.serializationVersion >> 24) & 0xff) + "." +
+                std::to_string((drawable.serializationVersion >> 16) & 0xff) + "." + std::to_string(drawable.serializationVersion & 0xffff))
+            << ", \"header_offset\": " << model_->memberOffset + drawable.entryHeaderOffset
+            << ", \"vertex_flags\": " << drawable.vertexFlags
+            << ", \"vertex_data_offset\": " << model_->memberOffset + drawable.vertexDataOffset
+            << ", \"has_flag_0x2\": " << (drawable.hasAttributeFlag2 ? "true" : "false")
+            << ", \"has_flag_0x4\": " << (drawable.hasAttributeFlag4 ? "true" : "false")
+            << ", \"attribute_flag_semantics_confirmed\": false"
+            << ", \"has_uv\": " << (drawable.hasUv ? "true" : "false") << ",\n"
+            << "      \"strip_lengths\": [";
+        for (std::size_t i = 0; i < drawable.stripLengths.size(); ++i)
+            output << (i ? ", " : "") << drawable.stripLengths[i];
+        output << "],\n      \"vertices\": [\n";
+        for (std::size_t i = 0; i < drawable.vertices.size(); ++i) {
+            const auto& vertex = drawable.vertices[i];
+            const auto vertexOffset = model_->memberOffset + drawable.vertexDataOffset + i *
+                (12 + (drawable.hasAttributeFlag2 ? 4 : 0) + (drawable.hasAttributeFlag4 ? 4 : 0) + (drawable.hasUv ? 8 : 0));
+            output << "        {\"index\": " << i << ", \"source_offset\": " << vertexOffset << ", \"position\": ["
+                << vertex.position[0] << ", " << vertex.position[1] << ", " << vertex.position[2] << "]";
+            if (drawable.hasAttributeFlag2)
+                output << ", \"attribute_flag_0x2_raw\": [" << static_cast<unsigned>(vertex.attributeFlag2[0]) << ", "
+                    << static_cast<unsigned>(vertex.attributeFlag2[1]) << ", " << static_cast<unsigned>(vertex.attributeFlag2[2]) << ", "
+                    << static_cast<unsigned>(vertex.attributeFlag2[3]) << "]";
+            if (drawable.hasAttributeFlag4)
+                output << ", \"attribute_flag_0x4_raw\": [" << static_cast<unsigned>(vertex.attributeFlag4[0]) << ", "
+                    << static_cast<unsigned>(vertex.attributeFlag4[1]) << ", " << static_cast<unsigned>(vertex.attributeFlag4[2]) << ", "
+                    << static_cast<unsigned>(vertex.attributeFlag4[3]) << "]";
+            if (drawable.hasUv) output << ", \"uv\": [" << vertex.uv[0] << ", " << vertex.uv[1] << "]";
+            output << "}" << (i + 1 == drawable.vertices.size() ? "\n" : ",\n");
+        }
+        output << "      ]\n    }" << (d + 1 == model_->drawables.size() ? "\n" : ",\n");
+    }
+    output << "  ]\n}\n";
+    if (!output) {
+        error = "Failed while writing vkModel debug JSON output: " + outputPath.string();
+        return false;
+    }
+    return true;
+}
+
 void ModelViewerControl::showUnsupportedResource(const std::filesystem::path& archivePath,
                                                  const runtime::PckEntry& entry, const std::string& reason)
 {
@@ -296,8 +382,8 @@ void ModelViewerControl::showUnsupportedResource(const std::filesystem::path& ar
     active_ = true;
     status_ = reason;
     resourceSummary_ = archivePath.filename().string() + " / " + entry.name + " | " + entry.type +
-        " v" + std::to_string((entry.serializationVersion >> 16) & 0xff) + "." +
-        std::to_string((entry.serializationVersion >> 8) & 0xff) + "." +
+        " v" + std::to_string((entry.serializationVersion >> 24) & 0xff) + "." +
+        std::to_string((entry.serializationVersion >> 16) & 0xff) + "." +
         std::to_string(entry.serializationVersion & 0xffff) + " | bytes [" +
         std::to_string(entry.offset) + ", " + std::to_string(entry.offset + entry.size) + ")";
 }
@@ -307,10 +393,25 @@ bool ModelViewerControl::handleEvent(const SDL_Event& event)
     if (!active_ || event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return false;
     switch (event.key.key) {
     case SDLK_W: wireframe_ = !wireframe_; return true;
-    case SDLK_C: vertexColors_ = !vertexColors_; return true;
+    case SDLK_C:
+        if (model_) return true; // The raw model attribute flag is not yet confirmed as color.
+        vertexColors_ = !vertexColors_;
+        return true;
     case SDLK_F3: diagnostics_ = !diagnostics_; return true;
     case SDLK_F4: bounds_ = !bounds_; return true;
     case SDLK_V: vertexPoints_ = !vertexPoints_; return true;
+    case SDLK_LEFTBRACKET:
+        if (model_ && !model_->drawables.empty()) {
+            selectedDrawable_ = (selectedDrawable_ + model_->drawables.size() - 1) % model_->drawables.size();
+            return true;
+        }
+        return false;
+    case SDLK_RIGHTBRACKET:
+        if (model_ && !model_->drawables.empty()) {
+            selectedDrawable_ = (selectedDrawable_ + 1) % model_->drawables.size();
+            return true;
+        }
+        return false;
     case SDLK_LEFT: yaw_ -= 0.08f; return true;
     case SDLK_RIGHT: yaw_ += 0.08f; return true;
     case SDLK_EQUALS: case SDLK_KP_PLUS: zoom_ *= 1.1f; return true;
@@ -329,33 +430,58 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
     const SDL_FRect scene{viewport.x + 16, viewport.y + 42, viewport.w - panelWidth - 32, viewport.h - 88};
     spyhunter::gui::panel(renderer, scene, {232, 235, 238, 255});
     spyhunter::gui::panel(renderer, {scene.x + scene.w + 16, scene.y, panelWidth, scene.h}, {34, 40, 47, 255});
-    if (mesh_) {
-        renderTrack(renderer, *mesh_, scene, wireframe_, vertexColors_, bounds_, vertexPoints_, yaw_, zoom_);
-        const auto& mesh = *mesh_;
+    if (mesh_ || (model_ && !model_->drawables.empty())) {
         float y = scene.y + 16;
         const auto line = [&](const std::string& value) { spyhunter::gui::text(renderer, scene.x + scene.w + 28, y, value); y += diagnostics_ ? 18.0f : 22.0f; };
-        line("Type: vkTrack v3.0.85");
-        line("Internal BSP: " + std::to_string(mesh.bspVersion));
-        line("Member: " + spyhunter::gui::shorten(mesh.memberName, 34));
-        line("Archive: " + spyhunter::gui::shorten(std::filesystem::path(mesh.archivePath).filename().string(), 34));
-        line("Member bytes: " + std::to_string(mesh.memberOffset));
-        line("Batch offset: " + std::to_string(mesh.batchOffset));
-        line("Vertex data offset: " + std::to_string(mesh.vertexDataOffset));
-        line("Leaf / batch: " + std::to_string(mesh.leafIndex) + " / " + std::to_string(mesh.batchIndex));
-        line("Vertices: " + std::to_string(mesh.vertices.size()));
-        line("Strips: " + std::to_string(mesh.stripLengths.size()));
-        line("Triangle slots: " + std::to_string(triangleSlots(mesh)));
-        line("Texture ref: " + std::to_string(mesh.textureIndex));
-        line("Texture: " + (mesh.textureName.empty() ? std::string("<null>") : mesh.textureName));
-        line("Texture unresolved");
-        line("Coordinates retained; units unknown");
-        line("Depth uses painter approximation");
-        line("W: wireframe | C: vertex colors");
-        line("Arrows: orbit | +/-: zoom");
-        line("Home: reset | F3: diagnostics");
-        line("F4: bounds | V: vertex points");
-        if (diagnostics_) {
-            const auto stats = diagnose(mesh);
+        if (mesh_) {
+            const auto& mesh = *mesh_;
+            renderTrack(renderer, mesh, scene, wireframe_, vertexColors_, bounds_, vertexPoints_, yaw_, zoom_);
+            line("Type: vkTrack v3.0.85");
+            line("Internal BSP: " + std::to_string(mesh.bspVersion));
+            line("Member: " + spyhunter::gui::shorten(mesh.memberName, 34));
+            line("Archive: " + spyhunter::gui::shorten(std::filesystem::path(mesh.archivePath).filename().string(), 34));
+            line("Member bytes: " + std::to_string(mesh.memberOffset));
+            line("Batch offset: " + std::to_string(mesh.batchOffset));
+            line("Vertex data offset: " + std::to_string(mesh.vertexDataOffset));
+            line("Leaf / batch: " + std::to_string(mesh.leafIndex) + " / " + std::to_string(mesh.batchIndex));
+            line("Vertices: " + std::to_string(mesh.vertices.size()));
+            line("Strips: " + std::to_string(mesh.stripLengths.size()));
+            line("Triangle slots: " + std::to_string(triangleSlots(mesh)));
+            line("Texture ref: " + std::to_string(mesh.textureIndex));
+            line("Texture: " + (mesh.textureName.empty() ? std::string("<null>") : mesh.textureName));
+            line("Texture unresolved");
+            line("Coordinates retained; units unknown");
+            line("Depth uses painter approximation");
+        } else {
+            const auto& drawable = model_->drawables[selectedDrawable_];
+            renderTrack(renderer, drawable, scene, wireframe_, false,
+                        bounds_, vertexPoints_, yaw_, zoom_);
+            line("Type: vkModel v" + std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
+                 std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff));
+            line("Member: " + spyhunter::gui::shorten(model_->memberName, 34));
+            line("Archive: " + spyhunter::gui::shorten(std::filesystem::path(model_->archivePath).filename().string(), 34));
+            line("Member bytes: " + std::to_string(model_->memberOffset) + " + " + std::to_string(model_->memberSize));
+            line("Drawable: " + std::to_string(selectedDrawable_ + 1) + " / " + std::to_string(model_->drawables.size()) +
+                 " (object " + std::to_string(drawable.objectIndex) + ")");
+            line("Geometry header: " + std::to_string(model_->memberOffset + drawable.entryHeaderOffset));
+            line("Vertex data: " + std::to_string(model_->memberOffset + drawable.vertexDataOffset));
+            line("Vertices / strips: " + std::to_string(drawable.vertices.size()) + " / " + std::to_string(drawable.stripLengths.size()));
+            line("Triangle slots: " + std::to_string(triangleSlots(drawable)));
+            line("Flags: 0x" + [&] { std::ostringstream out; out << std::hex << drawable.vertexFlags; return out.str(); }());
+            line(std::string("Attributes: position") + (drawable.hasAttributeFlag2 ? ", flag 0x2 raw" : "") +
+                 (drawable.hasAttributeFlag4 ? ", flag 0x4 raw" : "") + (drawable.hasUv ? ", UV" : ""));
+            line("Attribute flag meanings unresolved");
+            line("Node transforms not applied");
+            line("Shader / texture unresolved");
+            line("W: wireframe | C: color flag unresolved");
+            line("[ / ]: select drawable");
+            line("Arrows: orbit | +/-: zoom");
+            line("Home: reset | F3: diagnostics");
+            line("F4: bounds | V: vertex points");
+        }
+        const auto drawGeometryDiagnostics = [&](const auto& geometry) {
+            if (!diagnostics_) return;
+            const auto stats = diagnose(geometry);
             const auto pair = [](const float minimum, const float maximum) {
                 return std::to_string(minimum) + " .. " + std::to_string(maximum);
             };
@@ -366,7 +492,9 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("V: " + pair(stats.uvMinimum[1], stats.uvMaximum[1]));
             line("Degenerate triangle slots: " + std::to_string(stats.degenerateTriangles));
             line("Yaw / zoom: " + std::to_string(yaw_) + " / " + std::to_string(zoom_));
-        }
+        };
+        if (mesh_) drawGeometryDiagnostics(*mesh_);
+        else drawGeometryDiagnostics(model_->drawables[selectedDrawable_]);
     } else {
         spyhunter::gui::text(renderer, scene.x + 20, scene.y + 28, "Resource identified; geometry is not available for preview.");
         spyhunter::gui::text(renderer, scene.x + 20, scene.y + 52, "Parser status and source range are shown at right.");
