@@ -1,6 +1,7 @@
 # Main game structure
 
 The source-derived [frontend menu requirements](../../../docs/frontend-menu-requirements.md)
+and [Mission Select requirements](../../../docs/mission-select-requirements.md)
 document the original hierarchy, navigation and selection commands. The current
 native hierarchy now follows that baseline; the implementation-status section
 records remaining gameplay/media, progress and presentation boundaries.

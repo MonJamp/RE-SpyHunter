@@ -87,6 +87,8 @@ private:
     std::array<std::array<runtime::PackedTexture, 3>, 14> missionScenes_;
     std::array<std::size_t, 14> missionSceneSlots_{};
     std::array<double, 14> missionSceneChangedAt_{};
+    std::array<SDL_Point, 14> missionCardPositions_{};
+    Uint64 missionCardLastUpdatedAtMs_ = 0;
     std::array<runtime::PackedTexture, 13> missionAccessLabels_;
     runtime::PackedTexture missionBlue_;
     runtime::PackedTexture missionOverlay4_;

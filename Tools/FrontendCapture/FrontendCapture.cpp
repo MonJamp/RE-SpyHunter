@@ -201,6 +201,9 @@ int main(const int argc, char** argv)
         !(menu.itemCount() == 0 && options.selection == 0)) {
         std::cerr << "Selection is out of range for the destination screen.\n"; return 2;
     }
+    if (menu.screen() == spyhunter::game::FrontendMenu::Screen::missionSelect) {
+        for (int frame = 0; frame < 70; ++frame) { menu.update(); SDL_Delay(10); }
+    }
     const auto direction = menu.screen() == spyhunter::game::FrontendMenu::Screen::cheatGrid ||
         menu.screen() == spyhunter::game::FrontendMenu::Screen::briefing ? SDLK_RIGHT : SDLK_DOWN;
     for (int index = 0; index < options.selection; ++index) key(menu, direction);

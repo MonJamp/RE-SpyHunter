@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -79,6 +80,21 @@ constexpr std::array<std::string_view, 13> missionAccessMembers{
     "menu_opr_access_57.rgba"};
 constexpr std::array<int, 14> missionAllowanceSeconds{480, 420, 360, 420, 420, 420, 420, 420, 420, 360, 360, 360, 300, 540};
 
+int linearTrack(const int target, const int current, const float deltaSeconds)
+{
+    const float difference = static_cast<float>(target - current);
+    if (std::abs(difference) <= 0.000001f) return current;
+    const float step = std::copysign(400.0f * std::min(deltaSeconds, 0.05f), difference);
+    if (std::abs(step) > std::abs(difference)) return target;
+    return static_cast<int>(std::nearbyint(static_cast<float>(current) + step));
+}
+
+int missionAllowance(const std::size_t mission, const bool allLevelsOverride)
+{
+    if (allLevelsOverride) return 1000;
+    return mission < missionAllowanceSeconds.size() ? missionAllowanceSeconds[mission] : 0;
+}
+
 struct MissionAccess
 {
     bool open = false;
@@ -90,9 +106,10 @@ MissionAccess missionAccess(const std::size_t mission, const FrontendMenu::Missi
 {
     if (mission >= missionPointThresholds.size()) return {};
     const bool firstMission = mission == 0;
-    const bool insufficientPoints = !firstMission &&
+    const bool insufficientPoints = !progress.allLevelsOverride && !firstMission &&
         progress.objectivePoints < missionPointThresholds[mission];
-    const bool previousPrimaryIncomplete = !firstMission && !progress.primaryObjectivesComplete[mission - 1];
+    const bool previousPrimaryIncomplete = !progress.allLevelsOverride && !firstMission &&
+        !progress.primaryObjectivesComplete[mission - 1];
     return {
         progress.allLevelsOverride || firstMission ||
             (!insufficientPoints && !previousPrimaryIncomplete),
@@ -274,8 +291,24 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
 void FrontendMenu::update()
 {
     if (backgroundLoaded_) background_.update();
-    const double nowSeconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+    const auto nowMs = SDL_GetTicks();
+    const double nowSeconds = static_cast<double>(nowMs) / 1000.0;
     if (screen_ == Screen::missionSelect) {
+        const float deltaSeconds = missionCardLastUpdatedAtMs_ == 0 || nowMs < missionCardLastUpdatedAtMs_
+            ? 0.0f : static_cast<float>(nowMs - missionCardLastUpdatedAtMs_) / 1000.0f;
+        missionCardLastUpdatedAtMs_ = nowMs;
+        const auto selected = submenuSelection_.index();
+        constexpr std::array<int, 5> offsets{-1, 0, 1, 2, 3};
+        constexpr std::array<int, 5> targets{28, 120, 200, 278, 360};
+        for (std::size_t slot = 0; slot < offsets.size(); ++slot) {
+            const auto mission = static_cast<std::size_t>((static_cast<int>(selected) + offsets[slot] +
+                static_cast<int>(missionCardPositions_.size())) % static_cast<int>(missionCardPositions_.size()));
+            auto& position = missionCardPositions_[mission];
+            position.x = linearTrack(60, position.x, deltaSeconds);
+            position.y = linearTrack(targets[slot], position.y, deltaSeconds);
+        }
+        const auto immediateMission = (selected + missionCardPositions_.size() - 2) % missionCardPositions_.size();
+        missionCardPositions_[immediateMission] = {60, 28};
         for (std::size_t mission = 0; mission < missionSceneSlots_.size(); ++mission) {
             const double interval = static_cast<double>(std::rand() % 10) + 1.0;
             if (nowSeconds - missionSceneChangedAt_[mission] > interval) {
@@ -428,6 +461,8 @@ void FrontendMenu::configure(Screen destination, std::size_t selection)
     if (destination == Screen::missionSelect) {
         missionSceneSlots_.fill(0);
         missionSceneChangedAt_.fill(static_cast<double>(SDL_GetTicks()) / 1000.0);
+        missionCardPositions_.fill({60, 120});
+        missionCardLastUpdatedAtMs_ = SDL_GetTicks();
     }
     if (const auto node = menuNode(screen_)) {
         menuTitle_ = node->title;
@@ -584,11 +619,11 @@ void FrontendMenu::render() const
         const SDL_Rect clip{57, 90, 526, 269};
         SDL_SetRenderClipRect(renderer_, &clip);
         constexpr std::array<int, 5> cardOffsets{-1, 0, 1, 2, 3};
-        constexpr std::array<float, 5> sourceY{28, 120, 200, 278, 360};
         for (std::size_t slot = 0; slot < cardOffsets.size(); ++slot) {
             const auto mission = static_cast<std::size_t>((static_cast<int>(selected) + cardOffsets[slot] +
                 static_cast<int>(missionScenes_.size())) % static_cast<int>(missionScenes_.size()));
-            const SDL_FRect card{60, sourceY[slot], 128, 64};
+            const auto position = missionCardPositions_[mission];
+            const SDL_FRect card{static_cast<float>(position.x), static_cast<float>(position.y), 128, 64};
             const auto frameSlot = missionSceneSlots_[mission];
             const auto textureFrame = frameSlot < 3 ? frameSlot : frameSlot - 3;
             missionScenes_[mission][textureFrame].draw(renderer_, card.x, card.y, card.w, card.h);
@@ -637,7 +672,8 @@ void FrontendMenu::render() const
         rendezvousLine_.draw(renderer_, 121, 294);
         profileFont_.drawText(renderer_, "RENDEZVOUS", 212, 114, canvasHeight, 1.0f, white);
         char allowance[16]{};
-        const auto seconds = missionAllowanceSeconds[selected];
+        const auto seconds = missionAllowance(selected,
+            missionProgress_[profileSelection_.index()].allLevelsOverride);
         std::snprintf(allowance, sizeof(allowance), "%2d:%02d", seconds/60, seconds%60);
         profileFont_.drawText(renderer_, allowance, 380, 113, canvasHeight, 1.0f, orange);
         profileFont_.drawText(renderer_, "MIN", 478, 115, canvasHeight, 1.0f, orange);
