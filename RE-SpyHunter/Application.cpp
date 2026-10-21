@@ -19,6 +19,7 @@ using Renderer = std::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)>;
 std::optional<FrontendMenu::Screen> parseDebugStartScreen(const std::string_view name)
 {
     using Screen = FrontendMenu::Screen;
+    if (name == "mission-select") return Screen::missionSelect;
     if (name == "dossier") return Screen::dossier;
     if (name == "settings") return Screen::settings;
     if (name == "controller") return Screen::controller;
@@ -47,7 +48,7 @@ int runApplication(int argc, char** argv)
     commandLine.add_flag("--debug-profile", debugProfile,
                          "Use isolated local-assets/debug-profiles.txt storage");
     commandLine.add_option("--start-screen", startScreenArgument,
-                           "Open a frontend submenu directly (dossier, settings, controller, extras, music, movies, cheats)");
+                           "Open a frontend screen directly (mission-select, dossier, settings, controller, extras, music, movies, cheats)");
     argv = commandLine.ensure_utf8(argv);
     try {
         commandLine.parse(argc, argv);
@@ -68,7 +69,7 @@ int runApplication(int argc, char** argv)
         debugStartScreen = parseDebugStartScreen(startScreenArgument);
         if (!debugStartScreen) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "RE::SpyHunter command line",
-                                     "Unknown --start-screen value. Choose dossier, settings, controller, extras, music, movies or cheats.", nullptr);
+                                     "Unknown --start-screen value. Choose mission-select, dossier, settings, controller, extras, music, movies or cheats.", nullptr);
             return 2;
         }
     }

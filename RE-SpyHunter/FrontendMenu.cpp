@@ -213,6 +213,7 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         Screen parent = Screen::systemOptions;
         std::size_t parentSelection = 0;
         switch (*debugStartScreen) {
+        case Screen::missionSelect: parent = Screen::mainMenu; parentSelection = 0; break;
         case Screen::dossier: parent = Screen::mainMenu; parentSelection = 3; break;
         case Screen::settings: parentSelection = 0; break;
         case Screen::controller: parentSelection = 1; break;
@@ -221,7 +222,7 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         case Screen::moviePlayer: parent = Screen::extras; parentSelection = 1; break;
         case Screen::cheatGrid: parent = Screen::extras; parentSelection = 2; break;
         default:
-            error = "The debug start screen must be a supported frontend submenu.";
+            error = "The debug start screen must be a supported frontend screen.";
             return false;
         }
         if (!debugProfile) {

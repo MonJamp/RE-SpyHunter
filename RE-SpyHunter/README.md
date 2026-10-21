@@ -25,7 +25,9 @@ From the solution directory, launch directly into Settings with:
 & .\x64\Debug\RE-SpyHunter.exe .\SpyHunter.config --debug-profile --start-screen settings
 ```
 
-`--debug-profile` uses the isolated `local-assets/debug-profiles.txt` store and seeds profile 1 as `DEBUG`; it never writes normal `profiles.txt`. `--start-screen` requires that flag, skips the intro and profile picker, and accepts `dossier`, `settings`, `controller`, `extras`, `music`, `movies`, or `cheats`. Back returns to Main for Dossier and to the matching System Options or Extras parent for the other screens. If `--debug-profile` is used alone, the normal intro and profile picker remain, with the isolated DEBUG profile available there. Changes are saved to the debug store when accepted.
+To open Mission Select directly, use `--start-screen mission-select` instead of `settings`.
+
+`--debug-profile` uses the isolated `local-assets/debug-profiles.txt` store and seeds profile 1 as `DEBUG`; it never writes normal `profiles.txt`. `--start-screen` requires that flag, skips the intro and profile picker, and accepts `mission-select`, `dossier`, `settings`, `controller`, `extras`, `music`, `movies`, or `cheats`. Mission Select and Dossier return to Main; other screens return to their matching System Options or Extras parent. If `--debug-profile` is used alone, the normal intro and profile picker remain, with the isolated DEBUG profile available there. Changes are saved to the debug store when accepted.
 
 ## Smoke check
 
