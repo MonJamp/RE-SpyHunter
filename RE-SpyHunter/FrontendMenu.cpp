@@ -690,13 +690,22 @@ void FrontendMenu::render() const
         font_.drawText(renderer_, "MISSION", 285, 339, canvasHeight, 1.0f, buttonTextOn);
         char missionNumber[3]{};
         std::snprintf(missionNumber, sizeof(missionNumber), "%02d", static_cast<int>(selected + 1));
-        profileFont_.drawTextScaled(renderer_, missionNumber, 197, 280, canvasHeight, 1.12f, 1.04f, orange);
+        // EuroStile12 is a temporary metric substitute for the unavailable
+        // mission-number VKF. Match the reference glyph bounds while keeping
+        // the recovered source anchor; source 1.12x1.04 scales describe the
+        // dedicated font and do not fit this substitute's much smaller glyphs.
+        constexpr SDL_Color missionNumberYellow{229, 200, 0, 255};
+        profileFont_.drawTextScaled(renderer_, missionNumber, 197, 280, canvasHeight, 2.9f, 2.5f,
+                                    missionNumberYellow);
         const auto missionTitle = catalogue::missions[selected];
         const auto split = missionTitle.rfind(' ');
         const auto title1 = split == std::string_view::npos ? missionTitle : missionTitle.substr(0, split);
         const auto title2 = split == std::string_view::npos ? std::string_view{} : missionTitle.substr(split + 1);
-        profileFont_.drawTextScaled(renderer_, title1, 301, 299, canvasHeight, 1.0f, 0.8f, red);
-        if (!title2.empty()) profileFont_.drawTextScaled(renderer_, title2, 301, 281, canvasHeight, 1.0f, 0.8f, red);
+        // The source title uses the dedicated menu_mission_name VKF, which is
+        // not decoded yet. These scales compensate for EuroStile12's smaller
+        // substitute metrics; preserve the independently recovered baselines.
+        profileFont_.drawTextScaled(renderer_, title1, 301, 299, canvasHeight, 1.5f, 1.15f, red);
+        if (!title2.empty()) profileFont_.drawTextScaled(renderer_, title2, 301, 281, canvasHeight, 1.5f, 1.15f, red);
         if (selected == 0) {
             constexpr std::array<std::string_view, 5> desc{"COMPLETE ONE LAP AROUND", "THE TEST TRACK AT THE IES",
                 "TRAINING FACILITY TO EARN", "SPYHUNTER STATUS AND", "BEGIN OFFICIAL FIELD WORK."};
@@ -715,7 +724,8 @@ void FrontendMenu::render() const
                 font_.drawText(renderer_, "COMPLETE.", 200, predecessorBaseline - 40, canvasHeight, 1.0f, white);
             }
         }
-        rendezvousLine_.draw(renderer_, 121, 294);
+        rendezvousLine_.drawTinted(renderer_, {121, 294, static_cast<float>(rendezvousLine_.width()),
+                                               static_cast<float>(rendezvousLine_.height())}, orange);
         profileFont_.drawText(renderer_, "RENDEZVOUS", 212, 114, canvasHeight, 1.0f, white);
         char allowance[16]{};
         const auto seconds = missionAllowance(selected,
