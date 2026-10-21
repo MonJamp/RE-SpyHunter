@@ -21,6 +21,8 @@ public:
 
     bool loadFromPackedArchive(const std::filesystem::path& archivePath,
                                std::string_view memberName, SDL_Renderer* renderer, std::string& error);
+    bool loadFromPackedArchive(const std::filesystem::path& archivePath, std::string_view memberName,
+                               float glyphScale, SDL_Renderer* renderer, std::string& error);
     bool loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_Renderer* renderer, std::string& error);
     void unload();
     void drawText(SDL_Renderer* renderer, std::string_view text, float x, float yFromBottom,

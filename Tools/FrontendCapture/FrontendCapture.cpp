@@ -16,6 +16,7 @@ struct Options
 {
     std::string assets;
     std::string background;
+    std::string missionRoot;
     std::string output;
     std::string screen = "profile";
     std::string region = "full";
@@ -42,8 +43,11 @@ void configureParser(CLI::App& app, Options& options)
     app.add_option("--output", options.output, "Destination BMP path (directory must exist)")
         ->required();
     app.add_option("--background", options.background, "Optional prepared MBACK.mp4 background");
-    app.add_option("--screen", options.screen, "Screen to render: profile, name, main, or mission-select")
-        ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main", "mission-select"}));
+    app.add_option("--mission-root", options.missionRoot,
+        "Optional extracted root containing PG1 (defaults to --assets)");
+    app.add_option("--screen", options.screen,
+        "Screen to render: profile, name, main, mission-select, or mission-loading")
+        ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main", "mission-select", "mission-loading"}));
     app.add_option("--selection", options.selection, "Selected profile/menu index (default: 0)")
         ->check(CLI::Range(0, 23));
     app.add_option("--path", options.path, "Comma-separated menu indices to accept from the main menu")
@@ -69,19 +73,25 @@ bool validateOptions(Options& options, std::string& error)
         error = "--path requires --screen main."; return false;
     }
     const int maximumSelection = options.screen == "main" ? 4 :
-        options.screen == "mission-select" ? 14 : 3;
+        options.screen == "mission-select" ? 14 :
+        options.screen == "mission-loading" || options.screen == "name" ? 1 : 3;
     if (options.path.empty() && options.selection >= maximumSelection) {
         error = "--selection is out of range for the selected screen.";
         return false;
     }
     if ((options.screen == "name" && (options.selection != 0 || options.filled)) ||
-        (options.screen == "mission-select" && options.filled)) {
+        (options.screen == "mission-select" && options.filled) ||
+        (options.screen == "mission-loading" && (options.selection != 0 || options.filled))) {
         error = "The selected screen does not support the requested --selection or --filled options.";
         return false;
     }
     std::sort(options.completedPrimary.begin(), options.completedPrimary.end());
     if (std::adjacent_find(options.completedPrimary.begin(), options.completedPrimary.end()) != options.completedPrimary.end()) {
         error = "--completed-primary mission IDs must not be repeated.";
+        return false;
+    }
+    if (options.screen == "mission-loading" && !options.path.empty()) {
+        error = "Mission loading capture does not support menu paths.";
         return false;
     }
     if (!options.rectFields.empty()) {
@@ -129,6 +139,24 @@ bool createProfile(spyhunter::game::FrontendMenu& menu)
     key(menu, SDLK_RETURN);
     return menu.screen() == spyhunter::game::FrontendMenu::Screen::mainMenu;
 }
+
+bool openMissionLoading(spyhunter::game::FrontendMenu& menu)
+{
+    using Screen = spyhunter::game::FrontendMenu::Screen;
+    if (menu.screen() == Screen::profileSelect) {
+        key(menu, SDLK_RETURN);
+        key(menu, SDLK_S); key(menu, SDLK_P); key(menu, SDLK_Y); key(menu, SDLK_1);
+        key(menu, SDLK_RETURN);
+    }
+    key(menu, SDLK_RETURN); // Operations
+    if (menu.screen() != Screen::missionSelect) return false;
+    key(menu, SDLK_RETURN); // Mission 1
+    if (menu.screen() != Screen::briefing) return false;
+    key(menu, SDLK_RETURN); // Objectives
+    key(menu, SDLK_RETURN); // Mission Data START
+    for (int frame = 0; frame < 50 && menu.screen() != Screen::missionLoading; ++frame) menu.update();
+    return menu.screen() == Screen::missionLoading;
+}
 }
 
 int main(const int argc, char** argv)
@@ -175,7 +203,13 @@ int main(const int argc, char** argv)
     } cleanup{temporaryRoot};
 
     std::string error;
-    spyhunter::game::FrontendMenu menu(renderer.get(), assetsPath, temporaryRoot / "profiles.txt", backgroundPath);
+    const auto frontendRoot = options.screen == "mission-loading" ? assetsPath.parent_path() : assetsPath;
+    spyhunter::game::FrontendMenu menu(renderer.get(), frontendRoot, temporaryRoot / "profiles.txt", backgroundPath);
+    if (options.screen == "mission-loading")
+    {
+        menu.setMissionLoadRoot(options.missionRoot.empty() ? assetsPath.parent_path() : pathFromUtf8(options.missionRoot));
+        menu.setMissionLoadCapturePause(std::chrono::milliseconds(1));
+    }
     if (!menu.load(error)) { std::cerr << error << '\n'; return 1; }
     spyhunter::game::FrontendMenu::MissionProgress missionProgress;
     missionProgress.objectivePoints = options.missionPoints;
@@ -190,6 +224,12 @@ int main(const int argc, char** argv)
     if (options.screen == "main" || options.filled) {
         if (!createProfile(menu)) { std::cerr << "Could not create capture profile.\n"; return 1; }
         if (options.screen == "profile") key(menu, SDLK_ESCAPE);
+    }
+    if (options.screen == "mission-loading") {
+        if (!openMissionLoading(menu)) {
+            std::cerr << "Could not enter Mission 1 loading capture state.\n";
+            return 1;
+        }
     }
     for (const int selected : options.path) {
         if (static_cast<std::size_t>(selected) >= menu.itemCount()) { std::cerr << "Menu path index is out of range.\n"; return 2; }
@@ -210,7 +250,8 @@ int main(const int argc, char** argv)
             std::cerr << "Could not open Mission Select from the capture fixture.\n"; return 1;
         }
     }
-    if (options.screen != "name" && static_cast<std::size_t>(options.selection) >= menu.itemCount() &&
+    if (options.screen != "name" && options.screen != "mission-loading" &&
+        static_cast<std::size_t>(options.selection) >= menu.itemCount() &&
         !(menu.itemCount() == 0 && options.selection == 0)) {
         std::cerr << "Selection is out of range for the destination screen.\n"; return 2;
     }
@@ -231,6 +272,8 @@ int main(const int argc, char** argv)
     if (!pixels || !SDL_SaveBMP(pixels.get(), options.output.c_str())) {
         std::cerr << SDL_GetError() << '\n'; return 1;
     }
+    if (options.screen == "mission-loading")
+        std::cout << "Loading diagnostic status: " << menu.status() << '\n';
     std::cout << "Captured " << options.screen << " selection " << options.selection << " region "
               << region.x << ',' << region.y << ',' << region.w << ',' << region.h
               << " -> " << options.output << '\n';

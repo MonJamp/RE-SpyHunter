@@ -31,9 +31,28 @@ bool readString(std::ifstream& stream, std::string& value, const std::uint32_t m
     return std::all_of(value.begin(), value.end(), [](unsigned char c) { return c >= 0x20 && c <= 0x7e; });
 }
 
+bool readPrecedingLoadName(std::ifstream& stream, const std::uint64_t offset, std::string& value)
+{
+    // Level archives store each requested load path as a length-prefixed string
+    // ending exactly at the following serialized object header.
+    const auto earliest = offset > 516 ? offset - 516 : 0;
+    for (auto start = offset >= 6 ? offset - 6 : 0; start >= earliest; --start) {
+        stream.clear();
+        stream.seekg(static_cast<std::streamoff>(start));
+        std::string candidate;
+        if (readString(stream, candidate, 512) && stream.tellg() == static_cast<std::streamoff>(offset)) {
+            value = std::move(candidate);
+            return true;
+        }
+        if (start == 0) break;
+    }
+    return false;
+}
+
 bool parseEntry(std::ifstream& stream, const std::uint64_t offset, const std::uint64_t fileSize, PckEntry& entry)
 {
     if (offset + 48 > fileSize) return false;
+    readPrecedingLoadName(stream, offset, entry.loadName);
     stream.clear(); stream.seekg(static_cast<std::streamoff>(offset));
     std::uint32_t marker = 0, entryVersion = 0, count = 0, pluginCount = 0, zero = 0;
     std::string plugins;
@@ -67,7 +86,12 @@ bool parseEntry(std::ifstream& stream, const std::uint64_t offset, const std::ui
         foundName = true;
         break;
     }
-    if (!foundName) return false;
+    if (!foundName) {
+        if (entry.loadName.empty()) return false;
+        const auto separator = entry.loadName.find_last_of("/\\");
+        entry.name = entry.loadName.substr(separator == std::string::npos ? 0 : separator + 1);
+        if (entry.name.empty()) return false;
+    }
     const auto position = stream.tellg();
     if (position < 0 || static_cast<std::uint64_t>(position) > fileSize) return false;
     entry.offset = offset;

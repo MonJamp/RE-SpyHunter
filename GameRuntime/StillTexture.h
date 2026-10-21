@@ -20,6 +20,7 @@ public:
                     std::string_view suffix, std::string& error);
     bool upload(SDL_Renderer* renderer, const DecodedStill& still, std::string& error);
     void drawFit(SDL_Renderer* renderer, const SDL_FRect& viewport) const;
+    void draw(SDL_Renderer* renderer, const SDL_FRect& bounds) const;
     bool loaded() const { return texture_ != nullptr; }
 
 private:

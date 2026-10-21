@@ -54,6 +54,13 @@ bool VkfTextureFont::loadFromPackedArchive(const std::filesystem::path& archiveP
                                            std::string_view memberName, SDL_Renderer* renderer,
                                            std::string& error)
 {
+    return loadFromPackedArchive(archivePath, memberName, 1.0f, renderer, error);
+}
+
+bool VkfTextureFont::loadFromPackedArchive(const std::filesystem::path& archivePath,
+                                           const std::string_view memberName, const float glyphScale,
+                                           SDL_Renderer* renderer, std::string& error)
+{
     PckArchive archive;
     if (!archive.open(archivePath, error)) return false;
     const auto& entries = archive.entries();
@@ -67,7 +74,21 @@ bool VkfTextureFont::loadFromPackedArchive(const std::filesystem::path& archiveP
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(found->size));
     if (archive.readEntry(static_cast<std::size_t>(found - entries.begin()), 0, bytes.data(), bytes.size(), error) != bytes.size())
         return false;
-    return loadFromBytes(bytes, renderer, error);
+    if (!loadFromBytes(bytes, renderer, error)) return false;
+    if (!std::isfinite(glyphScale) || glyphScale <= 0.0f) {
+        error = "VKF glyph scale must be finite and positive.";
+        return false;
+    }
+    for (auto& glyph : glyphs_) {
+        if (!glyph.present) continue;
+        glyph.width *= glyphScale;
+        glyph.height *= glyphScale;
+        glyph.originX *= glyphScale;
+        glyph.originY *= glyphScale;
+        glyph.advanceX *= glyphScale;
+        glyph.advanceY *= glyphScale;
+    }
+    return true;
 }
 
 bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_Renderer* renderer, std::string& error)

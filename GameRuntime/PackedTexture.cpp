@@ -52,6 +52,12 @@ std::optional<DecodedStill> loadPackedTexturePixels(const std::filesystem::path&
 bool PackedTexture::load(const std::filesystem::path& archivePath, const std::string_view memberName,
                          SDL_Renderer* renderer, std::string& error)
 {
+    return load(archivePath, memberName, renderer, error, SDL_SCALEMODE_LINEAR);
+}
+
+bool PackedTexture::load(const std::filesystem::path& archivePath, const std::string_view memberName,
+                         SDL_Renderer* renderer, std::string& error, const SDL_ScaleMode scaleMode)
+{
     unload();
     const auto decoded = loadPackedTexturePixels(archivePath, memberName, error);
     if (!decoded) return false;
@@ -62,9 +68,31 @@ bool PackedTexture::load(const std::filesystem::path& archivePath, const std::st
         error = SDL_GetError(); unload(); return false;
     }
     SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_LINEAR);
+    SDL_SetTextureScaleMode(texture_, scaleMode);
     width_ = static_cast<int>(width);
     height_ = static_cast<int>(height);
+    error.clear();
+    return true;
+}
+
+bool PackedTexture::load(std::istream& archiveStream, const std::uint64_t memberOffset,
+                         const std::uint64_t memberSize, SDL_Renderer* renderer, std::string& error,
+                         const SDL_ScaleMode scaleMode)
+{
+    unload();
+    const auto decoded = decodeRgba(archiveStream, memberOffset, memberSize, error);
+    if (!decoded) return false;
+    texture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                                 decoded->width, decoded->height);
+    if (!texture_ || !SDL_UpdateTexture(texture_, nullptr, decoded->rgba.data(), decoded->width * 4)) {
+        error = SDL_GetError();
+        unload();
+        return false;
+    }
+    SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture_, scaleMode);
+    width_ = decoded->width;
+    height_ = decoded->height;
     error.clear();
     return true;
 }
@@ -85,6 +113,20 @@ void PackedTexture::drawTinted(SDL_Renderer* renderer, const SDL_FRect& bounds, 
     SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
     SDL_SetTextureAlphaMod(texture_, color.a);
     SDL_RenderTexture(renderer, texture_, source, &bounds);
+    SDL_SetTextureColorMod(texture_, 255, 255, 255);
+    SDL_SetTextureAlphaMod(texture_, 255);
+}
+
+void PackedTexture::drawTintedMirrored(SDL_Renderer* renderer, const SDL_FRect& bounds, SDL_Color color,
+                                       const SDL_FRect& source, const bool horizontal,
+                                       const bool vertical) const
+{
+    if (!texture_) return;
+    SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
+    SDL_SetTextureAlphaMod(texture_, color.a);
+    const SDL_FlipMode flip = static_cast<SDL_FlipMode>((horizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE) |
+                                                        (vertical ? SDL_FLIP_VERTICAL : SDL_FLIP_NONE));
+    SDL_RenderTextureRotated(renderer, texture_, &source, &bounds, 0.0, nullptr, flip);
     SDL_SetTextureColorMod(texture_, 255, 255, 255);
     SDL_SetTextureAlphaMod(texture_, 255);
 }
