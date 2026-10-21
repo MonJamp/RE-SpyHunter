@@ -81,4 +81,10 @@ void StillTexture::drawFit(SDL_Renderer* renderer, const SDL_FRect& viewport) co
                                width * scale, height * scale};
     SDL_RenderTexture(renderer, texture_.get(), nullptr, &destination);
 }
+
+void StillTexture::draw(SDL_Renderer* renderer, const SDL_FRect& bounds) const
+{
+    if (!texture_ || bounds.w <= 0 || bounds.h <= 0) return;
+    SDL_RenderTexture(renderer, texture_.get(), nullptr, &bounds);
+}
 }

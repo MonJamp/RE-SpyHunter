@@ -2,6 +2,8 @@
 
 #include "VkiImage.h"
 #include <span>
+#include <istream>
+#include <cstdint>
 
 namespace spyhunter::runtime
 {
@@ -9,4 +11,6 @@ namespace spyhunter::runtime
 // Decodes the first color table/base mip, using the frontend's bottom-up raster convention.
 std::optional<DecodedStill> decodeRgba(std::span<const std::uint8_t> bytes, std::string& error);
 std::optional<DecodedStill> decodeRgba(const std::filesystem::path& path, std::string& error);
+std::optional<DecodedStill> decodeRgba(std::istream& stream, std::uint64_t offset, std::uint64_t length,
+                                       std::string& error);
 }

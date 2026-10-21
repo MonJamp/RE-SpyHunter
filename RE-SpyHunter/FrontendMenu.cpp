@@ -1,6 +1,7 @@
 #include "FrontendMenu.h"
 #include "FrontendCatalogue.h"
 #include "../GameUI/MenuDrawing.h"
+#include "../GameRuntime/PckArchive.h"
 
 #include <algorithm>
 #include <bit>
@@ -157,27 +158,49 @@ FrontendMenu::FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& 
 bool FrontendMenu::load(std::string& error, const bool debugProfile,
                         const std::optional<Screen> debugStartScreen)
 {
-    if (!font_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "Eurobet.vkf", renderer_, error))
+    const auto frontendAssetRoot = root_ / "DATA";
+    if (!font_.loadFromPackedArchive(frontendAssetRoot / "MENU.PCK", "Eurobet.vkf", renderer_, error))
         return false;
-    if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
+    if (!profileFont_.loadFromPackedArchive(frontendAssetRoot / "MENU.PCK", "euroStile12.vkf", renderer_, error))
         return false;
-    if (!missionLoadingBackground_.load(renderer_, root_ / "DATA" / "LOADING.VKI", error))
+    const auto assetRoot = frontendAssetRoot;
+    if (!missionLoadingTitleFont_.loadFromPackedArchive(assetRoot / "SYSTEM.PCK", "hudFont.vkf",
+                                                        renderer_, error) ||
+        !missionLoadingFont_.loadFromPackedArchive(assetRoot / "SYSTEM.PCK", "hudFont.vkf",
+                                                   0.53f, renderer_, error))
         return false;
-    if (!menuHighlightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_highlightbar.rgba", renderer_, error))
+    if (!missionLoadingBackground_.load(renderer_, assetRoot / "LOADING.VKI", error))
         return false;
-    if (!menuLightbar_.load(root_ / "DATA" / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
+    runtime::PckArchive hudArchive;
+    if (!hudArchive.open(assetRoot / "SYSTEM.PCK", error)) return false;
+    const auto hudBar = std::find_if(hudArchive.entries().begin(), hudArchive.entries().end(),
+        [](const runtime::PckEntry& entry) {
+            return entry.type == "vkDMATexture" &&
+                (entry.name == "messagebar.rgb" || entry.loadName == "new_hud/messagebar.rgb");
+        });
+    if (hudBar == hudArchive.entries().end()) {
+        error = "Original loading bar messagebar.rgb was not found in SYSTEM.PCK.";
         return false;
-    const auto menuArchive = root_ / "DATA" / "SYSTEM.PCK";
+    }
+    std::ifstream hudArchiveStream(assetRoot / "SYSTEM.PCK", std::ios::binary);
+    if (!hudArchiveStream || !missionLoadingBar_.load(hudArchiveStream, hudBar->offset, hudBar->size,
+            renderer_, error, SDL_SCALEMODE_NEAREST))
+        return false;
+    if (!menuHighlightbar_.load(assetRoot / "MENU.PCK", "menu_highlightbar.rgba", renderer_, error))
+        return false;
+    if (!menuLightbar_.load(assetRoot / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
+        return false;
+    const auto menuArchive = assetRoot / "SYSTEM.PCK";
     if (!menuEmptyBox_.load(menuArchive, "menu_empty_box.rgba", renderer_, error) ||
         !menuFilledBox_.load(menuArchive, "menu_filled_box.rgba", renderer_, error))
         return false;
-    const auto menuUiArchive = root_ / "DATA" / "MENU.PCK";
+    const auto menuUiArchive = assetRoot / "MENU.PCK";
     if (!dossierCheckedBox_.load(menuUiArchive, "menu_checkedbox.rgba", renderer_, error) ||
         !dossierUncheckedBox_.load(menuUiArchive, "menu_uncheckedbox.rgba", renderer_, error))
         return false;
     if (!profileLightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_lightbar_1pc_long.rgba", renderer_, error))
         return false;
-    const auto systemArchive = root_ / "DATA" / "SYSTEM.PCK";
+    const auto systemArchive = assetRoot / "SYSTEM.PCK";
     if (!navIcon_.load(systemArchive, "menu_buttons_nav_all.rgba", renderer_, error) ||
         !acceptIcon_.load(systemArchive, "menu_buttons_x.rgba", renderer_, error) ||
         !deleteIcon_.load(systemArchive, "menu_buttons_sq.rgba", renderer_, error) ||
@@ -248,7 +271,20 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
 void FrontendMenu::update()
 {
     if (backgroundLoaded_ && screen_ != Screen::missionLoading) background_.update();
-    if (screen_ == Screen::missionLoading) return;
+    if (screen_ == Screen::missionLoading) {
+        std::lock_guard lock(missionLoadMutex_);
+        std::string label;
+        switch (missionLoadStage_) {
+        case MissionLoadStage::staticArchive: label = "READING STATIC ARCHIVE"; break;
+        case MissionLoadStage::staticLevelData: label = "READING WATER DATA"; break;
+        case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
+        case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
+        }
+        status_ = missionLoadFinished_ ?
+            (missionLoadSucceeded_ ? "PACKAGE READ COMPLETE; 3D LEVEL DRAWING NOT IMPLEMENTED" : missionLoadError_) :
+            (missionLoadItem_.empty() ? label : label + " - " + missionLoadItem_);
+        return;
+    }
     if (screen_ == Screen::controller2Options && !hasSecondController()) back();
     const double now = static_cast<double>(SDL_GetTicks()) / 1000.0;
     if (const auto direction = horizontalAxis_.poll(now)) horizontal(direction);
@@ -400,17 +436,21 @@ void FrontendMenu::startMissionLoad()
         missionLoadSucceeded_ = false;
     }
     open(Screen::missionLoading);
-    const auto extractedRoot = root_;
+    const auto extractedRoot = missionLoadRoot_.empty() ? root_ : missionLoadRoot_;
     missionLoadWorker_ = std::jthread([this, extractedRoot](const std::stop_token stop) {
         std::string error;
         const bool loaded = inspectProvingGroundsPackage(extractedRoot, stop,
             [this, stop](const MissionLoadProgress& progress) {
                 if (stop.stop_requested()) return false;
-                std::lock_guard lock(missionLoadMutex_);
-                missionLoadStage_ = progress.stage;
-                missionLoadItem_.assign(progress.item);
-                missionLoadCompletedBytes_ = progress.completedBytes;
-                missionLoadTotalBytes_ = progress.totalBytes;
+                const auto capturePause = missionLoadCapturePause_;
+                {
+                    std::lock_guard lock(missionLoadMutex_);
+                    missionLoadStage_ = progress.stage;
+                    missionLoadItem_.assign(progress.item);
+                    missionLoadCompletedBytes_ = progress.completedBytes;
+                    missionLoadTotalBytes_ = progress.totalBytes;
+                }
+                if (capturePause.count() > 0) std::this_thread::sleep_for(capturePause);
                 return !stop.stop_requested();
             }, error);
         std::lock_guard lock(missionLoadMutex_);
@@ -429,7 +469,7 @@ void FrontendMenu::cancelMissionLoad()
 
 void FrontendMenu::drawMissionLoading() const
 {
-    missionLoadingBackground_.drawFit(renderer_, {0.0f, 0.0f, canvasWidth, canvasHeight});
+    missionLoadingBackground_.draw(renderer_, {0.0f, 0.0f, canvasWidth, canvasHeight});
 
     MissionLoadStage stage;
     std::string item;
@@ -450,64 +490,52 @@ void FrontendMenu::drawMissionLoading() const
     }
 
     const SDL_Color lightBlue = sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000);
-    const SDL_Color blue{50, 54, 105, 255};
+    const SDL_Color blue = sourceColor(0x3e54d4d6, 0x3e64e4e6, 0x3edadadc, 0x3f800000);
     const SDL_Color orange = sourceColor(0x3ee9a027, 0x3ed78d50, 0, 0x3f666666);
-    const SDL_Color white{255, 255, 255, 255};
-    profileFont_.drawText(renderer_, "LOADING", 415.0f, 412.0f, canvasHeight, 0.53f, lightBlue);
-    profileFont_.drawText(renderer_, "LOCATION:", 10.0f, 420.0f, canvasHeight, 0.53f, blue);
-    profileFont_.drawText(renderer_, "TEXAS, USA", 130.0f, 420.0f, canvasHeight, 0.53f, white);
-    profileFont_.drawText(renderer_, "TIME:", 10.0f, 408.0f, canvasHeight, 0.53f, blue);
-    profileFont_.drawText(renderer_, "8:00", 70.0f, 408.0f, canvasHeight, 0.53f, white);
+    const SDL_Color white = sourceColor(0x3f4353f8, 0x3f49fbe7, 0x3f5a1cac, 0x3f666666);
+    missionLoadingTitleFont_.drawText(renderer_, "LOADING", 415.0f, 412.0f, canvasHeight, 1.0f, lightBlue);
+    missionLoadingFont_.drawText(renderer_, "LOCATION:", 10.0f, 420.0f, canvasHeight, 1.0f, blue);
+    missionLoadingFont_.drawText(renderer_, "TEXAS, USA", 130.0f, 420.0f, canvasHeight, 1.0f, white);
+    missionLoadingFont_.drawText(renderer_, "TIME:", 10.0f, 408.0f, canvasHeight, 1.0f, blue);
+    missionLoadingFont_.drawText(renderer_, " 8:00", 70.0f, 408.0f, canvasHeight, 1.0f, white);
 
-    profileFont_.drawText(renderer_, "IES INTELLIGENCE", 78.0f, 303.0f, canvasHeight, 0.53f, orange);
-    constexpr std::array<std::string_view, 7> loadingCopy{
-        "MUST COMPLETE PRIMARY OBJECTIVE", "TO PASS LEVEL, AND SECONDARY",
-        "OBJECTIVES TO ADVANCE MISSIONS.", "DOUBLE TAP X BUTTON FOR TURBO BOOST.",
-        "L1 BUTTON CYCLES OFFENSIVE WEAPONS.", "R1 BUTTON FIRES ACTIVE WEAPON.",
-        "CIRCLE BUTTON FIRES GPS TRACKERS."
+    missionLoadingFont_.drawText(renderer_, "IES INTELLIGENCE:", 78.0f, 303.0f, canvasHeight, 1.0f, orange);
+    constexpr std::array<std::string_view, 9> loadingCopy{
+        "MUST COMPLETE PRIMARY OBJECTIVE ", "TO PASS LEVEL, AND SECONDARY ",
+        "OBJECTIVES TO ADVANCE MISSIONS.", "", "",
+        "DOUBLE TAP X BUTTON FOR TURBO BOOST.", "L1 BUTTON CYCLES OFFENSIVE WEAPONS.",
+        "R1 BUTTON FIRES ACTIVE WEAPON.", "CIRCLE BUTTON FIRES GPS TRACKERS."
     };
     for (std::size_t index = 0; index < loadingCopy.size(); ++index) {
         const float baseline = 278.0f - static_cast<float>(index) * 18.0f;
-        profileFont_.drawText(renderer_, loadingCopy[index], 103.0f, baseline, canvasHeight, 0.53f, orange);
-    }
-
-    std::string stageLabel;
-    switch (stage) {
-    case MissionLoadStage::staticArchive: stageLabel = "READING STATIC ARCHIVE"; break;
-    case MissionLoadStage::staticLevelData: stageLabel = "READING WATER DATA"; break;
-    case MissionLoadStage::dynamicArchive: stageLabel = "READING DYNAMIC ARCHIVE"; break;
-    case MissionLoadStage::levelInitializationData: stageLabel = "READING LEVEL SETUP DATA"; break;
-    }
-    if (finished && succeeded) stageLabel = "PACKAGE READ COMPLETE";
-    if (finished && !succeeded) stageLabel = "PACKAGE READ FAILED";
-    drawCentered(stageLabel, 78.0f, 0.72f);
-
-    if (finished && !succeeded) {
-        constexpr std::size_t maxErrorCharacters = 54;
-        const auto errorText = std::string_view(error);
-        const auto firstVisible = errorText.size() > maxErrorCharacters
-            ? errorText.size() - maxErrorCharacters : 0;
-        drawCentered(errorText.substr(firstVisible), 58.0f, 0.5f);
-    } else if (finished) {
-        drawCentered("3D LEVEL DRAWING NOT IMPLEMENTED", 55.0f, 0.65f);
-    } else if (!item.empty()) {
-        const auto separator = item.find_last_of("/\\");
-        drawCentered(std::string_view(item).substr(separator == std::string::npos ? 0 : separator + 1),
-                     55.0f, 0.58f);
-    } else {
-        drawCentered("PREPARING MISSION FILES", 55.0f, 0.58f);
+        const SDL_Color copyColor = index >= 3 ? white : orange;
+        missionLoadingFont_.drawText(renderer_, loadingCopy[index], 103.0f, baseline, canvasHeight, 1.0f,
+                                     copyColor);
+        if (index == 2) missionLoadingFont_.drawText(renderer_, "TIPS:", 78.0f, 208.0f,
+                                                     canvasHeight, 1.0f, orange);
     }
 
     const float amount = total == 0 ? 0.0f : static_cast<float>(
         (std::min)(static_cast<double>(completed) / static_cast<double>(total), 1.0));
-    constexpr SDL_FRect progressTrack{192.0f, 405.0f, 256.0f, 14.0f};
-    ui::drawFilledPanel(renderer_, progressTrack, {4, 24, 42, 230});
-    ui::drawFilledPanel(renderer_, {212.0f, 409.0f, 216.0f * amount, 6.0f}, {32, 145, 221, 255});
+    const auto drawBarPart = [this](const float x, const float width, const SDL_Color tint,
+                                    const float u0, const float v0, const float u1, const float v1) {
+        // Original vkSprite UV fields are fixed-point texels (16 units/texel).
+        // Convert those endpoints directly to SDL normalized texture coordinates.
+        missionLoadingBar_.drawTintedUv(renderer_, {x, 405.0f, width, 25.0f}, tint,
+            u0 / 16.0f, v0 / 16.0f, u1 / 16.0f, v1 / 16.0f);
+    };
+    drawBarPart(200.0f, 128.0f, blue, 0.0f, 512.0f, 4096.0f, 0.0f);
+    drawBarPart(327.0f, 128.0f, blue, 4096.0f, 512.0f, 0.0f, 0.0f);
+    drawBarPart(200.0f, 30.0f, lightBlue, 0.0f, 512.0f, 1000.0f, 0.0f);
+    const float fillWidth = 216.0f * amount;
+    drawBarPart(230.0f, fillWidth, lightBlue, 1000.0f, 512.0f,
+                1000.0f + 16.0f * fillWidth, 0.0f);
+    if (amount > 0.99f) drawBarPart(443.0f, 10.0f, lightBlue, 300.0f, 512.0f, 0.0f, 0.0f);
     if (!finished) {
         const auto percent = static_cast<int>(amount * 100.0f);
-        drawCentered("PACKAGE READ  " + std::to_string(percent) + "%", 98.0f, 0.62f);
+        const auto percentText = "HOST READ " + std::to_string(percent) + "%";
+        missionLoadingFont_.drawText(renderer_, percentText, 232.0f, 43.0f, canvasHeight, 1.0f, white);
     }
-    drawCentered(finished ? "ESC / TRIANGLE BACK" : "ESC / TRIANGLE CANCEL", 14.0f, 0.52f);
 }
 
 void FrontendMenu::configure(Screen destination, std::size_t selection)

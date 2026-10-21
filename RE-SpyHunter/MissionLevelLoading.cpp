@@ -34,6 +34,7 @@ bool hasLoadNameSuffix(const spyhunter::runtime::PckArchive& archive, const std:
 bool readArchive(const std::filesystem::path& path, const MissionLoadStage stage,
                  std::stop_token stop,
                  const std::function<bool(const MissionLoadProgress&)>& progress,
+                 const std::uint64_t aggregateBase, const std::uint64_t aggregateTotal,
                  std::string& error)
 {
     spyhunter::runtime::PckArchive archive;
@@ -61,7 +62,7 @@ bool readArchive(const std::filesystem::path& path, const MissionLoadStage stage
             }
             offset += received;
             completed += received;
-            if (progress && !progress({stage, entry.loadName, completed, total})) {
+            if (progress && !progress({stage, entry.loadName, aggregateBase + completed, aggregateTotal})) {
                 error = "Mission package inspection cancelled.";
                 return false;
             }
@@ -74,6 +75,7 @@ bool readCompanion(const std::filesystem::path& path,
                    const MissionLoadStage stage,
                    std::stop_token stop,
                    const std::function<bool(const MissionLoadProgress&)>& progress,
+                   const std::uint64_t aggregateBase, const std::uint64_t aggregateTotal,
                    std::string& error)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -99,7 +101,7 @@ bool readCompanion(const std::filesystem::path& path,
             return false;
         }
         completed += static_cast<std::uint64_t>(amount);
-        if (progress && !progress({stage, path.filename().string(), completed, total})) {
+        if (progress && !progress({stage, path.filename().string(), aggregateBase + completed, aggregateTotal})) {
             error = "Mission package inspection cancelled.";
             return false;
         }
@@ -134,12 +136,6 @@ bool inspectProvingGroundsPackage(const std::filesystem::path& extractedRoot,
         }
     }
 
-    // ShLevel::load reads the loose water file between the static and dynamic
-    // archives. ShLevel::init then reads AI, object definitions and effect counts.
-    if (!readArchive(staticArchivePath, MissionLoadStage::staticArchive, stop, progress, error) ||
-        !readCompanion(missionRoot / L"PG1.WTR", MissionLoadStage::staticLevelData,
-                       stop, progress, error)) return false;
-
     spyhunter::runtime::PckArchive dynamicArchive;
     if (!dynamicArchive.open(dynamicArchivePath, error)) {
         error = dynamicArchivePath.string() + ": " + error;
@@ -155,11 +151,57 @@ bool inspectProvingGroundsPackage(const std::filesystem::path& extractedRoot,
             return false;
         }
     }
-    if (!readArchive(dynamicArchivePath, MissionLoadStage::dynamicArchive, stop, progress, error)) return false;
+
+    std::uint64_t aggregateTotal = 0;
+    for (const auto& entry : staticArchive.entries()) aggregateTotal += entry.size;
+    for (const auto& entry : dynamicArchive.entries()) aggregateTotal += entry.size;
+    {
+        std::error_code sizeError;
+        aggregateTotal += std::filesystem::file_size(missionRoot / L"PG1.WTR", sizeError);
+        if (sizeError) { error = "Could not size PG1.WTR"; return false; }
+    }
+    for (const auto& companion : initializationCompanions) {
+        std::error_code sizeError;
+        aggregateTotal += std::filesystem::file_size(missionRoot / companion.path, sizeError);
+        if (sizeError) { error = "Could not size required mission file: " + (missionRoot / companion.path).string(); return false; }
+    }
+
+    // ShLevel::load reads the loose water file between the static and dynamic
+    // archives. ShLevel::init then reads AI, object definitions and effect counts.
+    std::uint64_t aggregateCompleted = 0;
+    const auto staticProgress = [&](const MissionLoadProgress& update) {
+        return !progress || progress({update.stage, update.item,
+                                      aggregateCompleted + update.completedBytes, aggregateTotal});
+    };
+    if (!readArchive(staticArchivePath, MissionLoadStage::staticArchive, stop, staticProgress,
+                     0, aggregateTotal, error)) return false;
+    std::uint64_t staticSize = 0;
+    for (const auto& entry : staticArchive.entries()) staticSize += entry.size;
+    aggregateCompleted += staticSize;
+    const auto waterProgress = [&](const MissionLoadProgress& update) {
+        return !progress || progress({update.stage, update.item, aggregateCompleted + update.completedBytes,
+                                      aggregateTotal});
+    };
+    if (!readCompanion(missionRoot / L"PG1.WTR", MissionLoadStage::staticLevelData, stop, waterProgress,
+                       0, aggregateTotal, error)) return false;
+    std::error_code waterSizeError;
+    aggregateCompleted += std::filesystem::file_size(missionRoot / L"PG1.WTR", waterSizeError);
+    if (waterSizeError) { error = "Could not size PG1.WTR"; return false; }
+    const auto dynamicProgress = [&](const MissionLoadProgress& update) {
+        return !progress || progress({update.stage, update.item,
+                                      aggregateCompleted + update.completedBytes, aggregateTotal});
+    };
+    if (!readArchive(dynamicArchivePath, MissionLoadStage::dynamicArchive, stop, dynamicProgress,
+                     0, aggregateTotal, error)) return false;
+    aggregateCompleted += [&] { std::uint64_t result = 0; for (const auto& entry : dynamicArchive.entries()) result += entry.size; return result; }();
 
     for (const auto& companion : initializationCompanions) {
         const auto path = missionRoot / companion.path;
-        if (!readCompanion(path, MissionLoadStage::levelInitializationData, stop, progress, error)) return false;
+        if (!readCompanion(path, MissionLoadStage::levelInitializationData, stop, progress,
+                           aggregateCompleted, aggregateTotal, error)) return false;
+        std::error_code companionSizeError;
+        aggregateCompleted += std::filesystem::file_size(path, companionSizeError);
+        if (companionSizeError) { error = "Could not size required mission file: " + path.string(); return false; }
     }
     return true;
 }

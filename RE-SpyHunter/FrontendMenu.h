@@ -8,6 +8,7 @@
 #include "../GameUI/MenuSelection.h"
 #include "../GameUI/MenuAxisRepeat.h"
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <cstdint>
 #include <mutex>
@@ -32,6 +33,8 @@ public:
                  std::filesystem::path profilePath, std::filesystem::path backgroundPath);
     bool load(std::string& error, bool debugProfile = false,
               std::optional<Screen> debugStartScreen = std::nullopt);
+    void setMissionLoadRoot(const std::filesystem::path& root) { missionLoadRoot_ = root; }
+    void setMissionLoadCapturePause(std::chrono::milliseconds pause) { missionLoadCapturePause_ = pause; }
     void handleEvent(const SDL_Event& event);
     void update();
     void render() const;
@@ -74,9 +77,14 @@ private:
     std::filesystem::path root_;
     std::filesystem::path profilePath_;
     std::filesystem::path backgroundPath_;
+    std::filesystem::path missionLoadRoot_;
+    std::chrono::milliseconds missionLoadCapturePause_{};
     runtime::VkfTextureFont font_;
     runtime::VkfTextureFont profileFont_;
+    runtime::VkfTextureFont missionLoadingTitleFont_;
+    runtime::VkfTextureFont missionLoadingFont_;
     runtime::StillTexture missionLoadingBackground_;
+    runtime::PackedTexture missionLoadingBar_;
     runtime::PackedTexture navIcon_;
     runtime::PackedTexture acceptIcon_;
     runtime::PackedTexture deleteIcon_;

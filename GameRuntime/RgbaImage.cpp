@@ -166,4 +166,23 @@ std::optional<DecodedStill> decodeRgba(const std::filesystem::path& path, std::s
     }
     return decodeRgba(std::span<const std::uint8_t>(bytes), error);
 }
+
+std::optional<DecodedStill> decodeRgba(std::istream& stream, const std::uint64_t offset,
+                                       const std::uint64_t length, std::string& error)
+{
+    if (length == 0 || length > maximumResource ||
+        offset > static_cast<std::uint64_t>((std::numeric_limits<std::streamoff>::max)()) ||
+        length > static_cast<std::uint64_t>((std::numeric_limits<std::streamsize>::max)())) {
+        error = "Texture stream extent is invalid or exceeds 32 MiB.";
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+    stream.clear();
+    stream.seekg(static_cast<std::streamoff>(offset));
+    if (!stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
+        error = "Could not read packed texture stream.";
+        return std::nullopt;
+    }
+    return decodeRgba(std::span<const std::uint8_t>(bytes), error);
+}
 }
