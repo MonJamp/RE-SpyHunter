@@ -12,6 +12,7 @@ struct PckEntry
 {
     std::string name;
     std::string type;
+    std::uint32_t serializationVersion = 0;
     std::uint64_t offset = 0;
     std::uint64_t size = 0;
 };

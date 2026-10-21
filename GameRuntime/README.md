@@ -28,8 +28,21 @@ that path for the local MBACK conversion without opening an audio device.
 `PckArchive.h` exposes a read-only archive index (`open`, `entries`) and a
 bounded `readEntry` method for one serialized resource. It scans PCK metadata
 in 64 KiB blocks without loading every resource body. Entry boundaries are
-inferred from the next validated header. `VkiImage.h` decodes standalone VKIs
+inferred from the next validated header. Indexed records retain the serialized
+type version as well as source name, offset, and inferred size. `VkiImage.h` decodes standalone VKIs
 and supported VKI members read from a PCK.
+
+`TrackGeometry.h` exposes a bounded PG1 track fixture reader for the observed
+PCK member `new_provinggrounds.trk` (outer 3.0.85, internal BSP v7). It retains
+source XYZ, RGBA bytes, UVs, strip boundaries, local texture reference, and
+archive, batch-header, and vertex-stream offsets for one selected leaf/batch.
+The selected stream's observed 24-byte vertex stride is exposed for source
+correlation. Counts, stream extents,
+texture references, finite floats, strip sums, collision extents, and decoded
+memory are checked before geometry is returned. It intentionally rejects
+other track versions and does not decode `.vk` models. The current viewer uses
+this as an inspection tool; no original camera, material, BSP visibility, or
+texture presentation parity is claimed.
 
 `RgbaImage.h` decodes serialized `vkDMATexture` `.rgba`/`.rgb` resources from
 bytes or a standalone file. It follows the original version-dependent reader

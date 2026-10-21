@@ -9,6 +9,7 @@
 #include "../../GameRuntime/PckArchive.h"
 #include "../../GameRuntime/VkiImage.h"
 #include "../../GameRuntime/RgbaImage.h"
+#include "ModelViewerControl.h"
 #include "../../GUI/Gui.h"
 #include "../../ThirdParty/CLI11/CLI11.hpp"
 
@@ -102,7 +103,7 @@ bool supported(const GameFile& file)
 
 bool supported(const spyhunter::runtime::PckEntry& entry)
 {
-    return entry.type == "vkDMATexture" ||
+    return entry.type == "vkTrack" || entry.type == "vkDMATexture" ||
            (entry.type == "vkImage" && lowercase(std::filesystem::path(entry.name).extension().string()) == ".vki");
 }
 
@@ -116,14 +117,20 @@ bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
 int main(int argc, char* argv[])
 {
     std::string configArgument;
-    std::string openArgument, memberArgument, exportArgument, captureArgument;
+    std::string openArgument, memberArgument, exportArgument, captureArgument, geometryDebugArgument;
+    std::uint32_t trackLeaf = 74, trackBatch = 5;
     bool alphaPreview = false;
     CLI::App commandLine{"Browse and preview extracted SpyHunter game files."};
     commandLine.add_option("config", configArgument, "Optional SpyHunter.config path");
     auto* openOption = commandLine.add_option("--open", openArgument, "Open a file relative to the configured game directory");
-    commandLine.add_option("--member", memberArgument, "Open a named PCK member (full name or basename)")->needs(openOption);
+    auto* memberOption = commandLine.add_option("--member", memberArgument, "Open a named PCK member (full name or basename)")->needs(openOption);
     auto* exportOption = commandLine.add_option("--export-image", exportArgument, "Export the selected decoded still as a native-resolution BMP and exit")->needs(openOption);
-    commandLine.add_option("--capture-view", captureArgument, "Save one viewer frame as a BMP and exit")->needs(openOption)->excludes(exportOption);
+    auto* captureOption = commandLine.add_option("--capture-view", captureArgument, "Save one viewer frame as a BMP and exit")->needs(openOption)->excludes(exportOption);
+    commandLine.add_option("--dump-geometry-json", geometryDebugArgument,
+        "Write decoded 3D vertices, strip topology, and source offsets as JSON and exit")
+        ->needs(openOption)->needs(memberOption)->excludes(exportOption)->excludes(captureOption);
+    commandLine.add_option("--leaf", trackLeaf, "Select a PG1 track BSP leaf (default: 74)")->needs(openOption);
+    commandLine.add_option("--batch", trackBatch, "Select a batch within the selected PG1 leaf (default: 5)")->needs(openOption);
     commandLine.add_flag("--alpha", alphaPreview, "Start in alpha-channel view (also applies to image export)")->needs(openOption);
     argv = commandLine.ensure_utf8(argv);
     try {
@@ -167,7 +174,7 @@ int main(int argc, char* argv[])
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("SpyHunter - SH Viewer", spyhunter::gui::defaultWindowWidth,
                                      spyhunter::gui::defaultWindowHeight, SDL_WINDOW_RESIZABLE |
-                                     (exportArgument.empty() && captureArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
+                                     (exportArgument.empty() && captureArgument.empty() && geometryDebugArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
         !spyhunter::gui::configureRenderer(renderer)) {
         SDL_Log("Window or renderer setup failed: %s", SDL_GetError());
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
@@ -181,6 +188,7 @@ int main(int argc, char* argv[])
     std::optional<size_t> loadedMemberIndex;
     SDL_Texture* stillTexture = nullptr;
     std::optional<DecodedStill> decodedStill;
+    spyhunter::tools::ModelViewerControl modelViewer;
     bool texturePreview = false, checkerboard = true;
     int stillWidth = 0, stillHeight = 0;
     spyhunter::runtime::CutsceneSession cutscene;
@@ -238,6 +246,7 @@ int main(int argc, char* argv[])
         decodedStill.reset();
         texturePreview = false;
         stillWidth = stillHeight = 0;
+        modelViewer.clear();
         loadedIndex = row.fileIndex;
         loadedMemberIndex = row.memberIndex;
         const GameFile& file = gameFiles[loadedIndex];
@@ -255,6 +264,38 @@ int main(int argc, char* argv[])
             const auto& entry = archive.entries()[*row.memberIndex];
             spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
                 "select member=" + file.displayPath + "/" + entry.name);
+            if (entry.type == "vkTrack") {
+                spyhunter::runtime::TrackLoadOptions options;
+                options.leafIndex = trackLeaf;
+                options.batchIndex = trackBatch;
+                std::string error;
+                if (modelViewer.openTrack(file.path, entry, options, error))
+                {
+                    status = "3D track preview: leaf " + std::to_string(options.leafIndex) +
+                             ", batch " + std::to_string(options.batchIndex) + " (host diagnostic view).";
+                    const auto& mesh = *modelViewer.meshForDiagnostics();
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::debug,
+                        "decoded vkTrack member=" + entry.name + " version=3.0.85 memberOffset=" +
+                        std::to_string(entry.offset) + " batchOffset=" + std::to_string(mesh.batchOffset) +
+                        " leaf=" + std::to_string(mesh.leafIndex) + " batch=" + std::to_string(mesh.batchIndex) +
+                        " vertices=" + std::to_string(mesh.vertices.size()) +
+                        " strips=" + std::to_string(mesh.stripLengths.size()));
+                }
+                else {
+                    modelViewer.showUnsupportedResource(file.path, entry, "Track parser rejected resource: " + error);
+                    status = "Track parser rejected resource: " + error;
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::warning,
+                        "vkTrack parse rejected member=" + entry.name + " offset=" + std::to_string(entry.offset) +
+                        " size=" + std::to_string(entry.size) + " reason=" + error);
+                }
+                return;
+            }
+            if (entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk") {
+                const std::string reason = "Ordinary vkModel hierarchy/drawable parser is not implemented yet.";
+                modelViewer.showUnsupportedResource(file.path, entry, reason);
+                status = reason;
+                return;
+            }
             if (!supported(entry)) {
                 status = "Viewing this PCK member type is not supported: " + entry.type;
                 return;
@@ -360,6 +401,16 @@ int main(int argc, char* argv[])
             }
         }
     }
+    if (!geometryDebugArgument.empty()) {
+        std::string error;
+        if (exitCode || !modelViewer.writeGeometryDebugJson(geometryDebugArgument, error)) {
+            SDL_Log("Geometry debug export failed: %s", exitCode ? status.c_str() : error.c_str());
+            exitCode = 1;
+        } else {
+            SDL_Log("Exported geometry diagnostics: %s (%s)", geometryDebugArgument.c_str(), status.c_str());
+        }
+        running = false;
+    }
     if (!exportArgument.empty()) {
         if (!decodedStill || exitCode) { SDL_Log("Image export failed: %s", status.c_str()); exitCode = 1; }
         else {
@@ -391,6 +442,8 @@ int main(int argc, char* argv[])
                         cutscene.stop(); audioPlayer.stop(); status = "Playback stopped.";
                     }
                     else running = false;
+                } else if (modelViewer.handleEvent(event)) {
+                    // The active 3D pane owns its inspection controls.
                 } else if (event.key.key == SDLK_1) setFilter(BrowserFilter::all);
                 else if (event.key.key == SDLK_2) setFilter(BrowserFilter::vki);
                 else if (event.key.key == SDLK_3) setFilter(BrowserFilter::pss);
@@ -467,7 +520,8 @@ int main(int argc, char* argv[])
             SDL_SetRenderDrawColor(renderer, 170, 180, 195, 255);
             spyhunter::gui::text(renderer, 24.0f, 50.0f, spyhunter::gui::shorten(status, 100));
         }
-        if (cutscene.isPlaying()) cutscene.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
+        if (modelViewer.active()) modelViewer.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
+        else if (cutscene.isPlaying()) cutscene.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
         else if (stillTexture) {
             const SDL_FRect viewport{16.0f, 72.0f, (std::max)(0.0f, browserLeft - 32.0f),
                                      (std::max)(0.0f, height - (texturePreview ? 118.0f : 88.0f))};
@@ -530,7 +584,8 @@ int main(int argc, char* argv[])
                 if (file.extension == ".mpk") label = "    " + audioArchive.entries()[*browserRow.memberIndex].name;
                 else {
                     const auto& entry = archive.entries()[*browserRow.memberIndex];
-                    label = "    " + entry.name + (supported(entry) ? "" : "  [unsupported]");
+                    const bool modelResource = entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk";
+                    label = "    " + entry.name + (modelResource ? "  [3D model]" : entry.type == "vkTrack" ? "  [3D track]" : supported(entry) ? "" : "  [unsupported]");
                 }
             } else {
                 label = ((file.extension == ".pck" || file.extension == ".mpk") ?
