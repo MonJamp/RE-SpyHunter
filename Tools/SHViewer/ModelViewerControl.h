@@ -31,7 +31,7 @@ public:
     const runtime::TrackMesh* meshForDiagnostics() const { return mesh_ ? &*mesh_ : nullptr; }
     const runtime::VkModelGeometry* modelForDiagnostics() const { return model_ ? &*model_ : nullptr; }
     const std::string& status() const { return status_; }
-    bool handleEvent(const SDL_Event& event);
+    bool handleEvent(const SDL_Event& event, const SDL_FRect& viewerViewport);
     void render(SDL_Renderer* renderer, const SDL_FRect& viewport) const;
 
 private:
@@ -42,7 +42,11 @@ private:
     std::string status_;
     std::string resourceSummary_;
     float yaw_ = 0.0f;
+    float elevation_ = 1.04719755f;
     float zoom_ = 1.0f;
+    bool dragging_ = false;
+    float lastMouseX_ = 0.0f;
+    float lastMouseY_ = 0.0f;
     bool wireframe_ = false;
     bool vertexColors_ = false;
     bool diagnostics_ = false;

@@ -21,23 +21,26 @@ struct Triangle { std::array<ProjectedVertex, 3> vertices{}; float depth = 0.0f;
 
 template<typename Vertex>
 SDL_FPoint project(const Vertex& source, const std::array<float, 3>& center,
-                   const float scale, const SDL_FRect& viewport, const float yaw)
+                   const float scale, const SDL_FRect& viewport, const float yaw, const float elevation)
 {
     const float x = source.position[0] - center[0];
     const float y = source.position[1] - center[1];
     const float z = source.position[2] - center[2];
-    const float c = std::cos(yaw), s = std::sin(yaw);
-    const float rx = x * c - y * s;
-    const float ry = x * s + y * c;
-    // Viewer-only isometric camera; the source coordinates remain untouched.
-    return {viewport.x + viewport.w * 0.5f + (rx - ry) * 0.70710678f * scale,
-            viewport.y + viewport.h * 0.52f + (rx + ry) * 0.35355339f * scale - z * 0.8660254f * scale};
+    const float azimuth = yaw + 0.78539816f;
+    const float azimuthCos = std::cos(azimuth), azimuthSin = std::sin(azimuth);
+    const float elevationCos = std::cos(elevation), elevationSin = std::sin(elevation);
+    const float screenRight = x * azimuthCos - y * azimuthSin;
+    const float screenDepth = x * azimuthSin + y * azimuthCos;
+    // Orthographic orbit camera. At the reset elevation this preserves the prior
+    // isometric view while allowing mouse drag to change azimuth and elevation.
+    return {viewport.x + viewport.w * 0.5f + screenRight * scale,
+            viewport.y + viewport.h * 0.52f + (screenDepth * elevationCos - z * elevationSin) * scale};
 }
 
 template<typename Mesh>
 void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& viewport,
                  const bool wireframe, const bool vertexColors, const bool showBounds,
-                 const bool showVertices, const float yaw, const float zoom)
+                 const bool showVertices, const float yaw, const float elevation, const float zoom)
 {
     if (mesh.vertices.empty() || viewport.w <= 0 || viewport.h <= 0) return;
     std::array<float, 3> minimum = mesh.vertices.front().position;
@@ -58,7 +61,7 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
         for (std::size_t corner = 0; corner < 3; ++corner) {
             const auto& source = mesh.vertices[indices[corner]];
             auto& output = triangle.vertices[corner];
-            output.point = project(source, center, scale, viewport, yaw);
+            output.point = project(source, center, scale, viewport, yaw, elevation);
             output.depth = source.position[0] + source.position[1] + source.position[2];
             triangle.depth += output.depth;
             output.color = vertexColors
@@ -97,7 +100,7 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
                 (mask & 1) ? maximum[0] : minimum[0],
                 (mask & 2) ? maximum[1] : minimum[1],
                 (mask & 4) ? maximum[2] : minimum[2]};
-            corners[mask] = project(runtime::TrackVertex{point}, center, scale, viewport, yaw);
+            corners[mask] = project(runtime::TrackVertex{point}, center, scale, viewport, yaw, elevation);
         }
         SDL_SetRenderDrawColor(renderer, 220, 54, 48, 255);
         for (unsigned mask = 0; mask < corners.size(); ++mask)
@@ -110,7 +113,7 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
     if (showVertices) {
         SDL_SetRenderDrawColor(renderer, 24, 92, 220, 255);
         for (const auto& vertex : mesh.vertices) {
-            const auto point = project(vertex, center, scale, viewport, yaw);
+            const auto point = project(vertex, center, scale, viewport, yaw, elevation);
             SDL_RenderPoint(renderer, point.x, point.y);
         }
     }
@@ -209,7 +212,9 @@ void ModelViewerControl::clear()
     status_.clear();
     resourceSummary_.clear();
     yaw_ = 0.0f;
+    elevation_ = 1.04719755f;
     zoom_ = 1.0f;
+    dragging_ = false;
     wireframe_ = vertexColors_ = false;
     diagnostics_ = bounds_ = vertexPoints_ = false;
 }
@@ -377,9 +382,56 @@ void ModelViewerControl::showUnsupportedResource(const std::filesystem::path& ar
         std::to_string(entry.offset) + ", " + std::to_string(entry.offset + entry.size) + ")";
 }
 
-bool ModelViewerControl::handleEvent(const SDL_Event& event)
+bool ModelViewerControl::handleEvent(const SDL_Event& event, const SDL_FRect& viewerViewport)
 {
-    if (!active_ || event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return false;
+    if (!active_) return false;
+    const float panelWidth = (std::min)(diagnostics_ ? 340.0f : 280.0f,
+                                        viewerViewport.w * (diagnostics_ ? 0.45f : 0.38f));
+    const SDL_FRect scene{viewerViewport.x + 16.0f, viewerViewport.y + 42.0f,
+                          viewerViewport.w - panelWidth - 32.0f, viewerViewport.h - 88.0f};
+    const auto insideScene = [&](const float x, const float y) {
+        return x >= scene.x && x < scene.x + scene.w && y >= scene.y && y < scene.y + scene.h;
+    };
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+        const float x = event.button.x / spyhunter::gui::defaultUiScale;
+        const float y = event.button.y / spyhunter::gui::defaultUiScale;
+        if (!insideScene(x, y)) return false;
+        dragging_ = true;
+        lastMouseX_ = x;
+        lastMouseY_ = y;
+        SDL_CaptureMouse(true);
+        return true;
+    }
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT && dragging_) {
+        dragging_ = false;
+        SDL_CaptureMouse(false);
+        return true;
+    }
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && dragging_) {
+        dragging_ = false;
+        SDL_CaptureMouse(false);
+        return true;
+    }
+    if (event.type == SDL_EVENT_MOUSE_MOTION && dragging_) {
+        const float x = event.motion.x / spyhunter::gui::defaultUiScale;
+        const float y = event.motion.y / spyhunter::gui::defaultUiScale;
+        constexpr float sensitivity = 0.008f;
+        yaw_ = std::remainder(yaw_ + (x - lastMouseX_) * sensitivity, 6.28318531f);
+        elevation_ = (std::clamp)(elevation_ - (y - lastMouseY_) * sensitivity,
+                                  0.08726646f, 1.48352986f);
+        lastMouseX_ = x;
+        lastMouseY_ = y;
+        return true;
+    }
+    if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+        const float x = event.wheel.mouse_x / spyhunter::gui::defaultUiScale;
+        const float y = event.wheel.mouse_y / spyhunter::gui::defaultUiScale;
+        if (!insideScene(x, y)) return false;
+        const float direction = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
+        zoom_ = (std::clamp)(zoom_ * std::pow(1.12f, direction * event.wheel.y), 0.08f, 12.0f);
+        return true;
+    }
+    if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return false;
     switch (event.key.key) {
     case SDLK_W: wireframe_ = !wireframe_; return true;
     case SDLK_C:
@@ -403,9 +455,11 @@ bool ModelViewerControl::handleEvent(const SDL_Event& event)
         return false;
     case SDLK_LEFT: yaw_ -= 0.08f; return true;
     case SDLK_RIGHT: yaw_ += 0.08f; return true;
-    case SDLK_EQUALS: case SDLK_KP_PLUS: zoom_ *= 1.1f; return true;
-    case SDLK_MINUS: case SDLK_KP_MINUS: zoom_ /= 1.1f; return true;
-    case SDLK_HOME: yaw_ = 0.0f; zoom_ = 1.0f; return true;
+    case SDLK_UP: elevation_ = (std::min)(1.48352986f, elevation_ + 0.06f); return true;
+    case SDLK_DOWN: elevation_ = (std::max)(0.08726646f, elevation_ - 0.06f); return true;
+    case SDLK_EQUALS: case SDLK_KP_PLUS: zoom_ = (std::min)(12.0f, zoom_ * 1.1f); return true;
+    case SDLK_MINUS: case SDLK_KP_MINUS: zoom_ = (std::max)(0.08f, zoom_ / 1.1f); return true;
+    case SDLK_HOME: yaw_ = 0.0f; elevation_ = 1.04719755f; zoom_ = 1.0f; return true;
     default: return false;
     }
 }
@@ -424,7 +478,7 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
         const auto line = [&](const std::string& value) { spyhunter::gui::text(renderer, scene.x + scene.w + 28, y, value); y += diagnostics_ ? 18.0f : 22.0f; };
         if (mesh_) {
             const auto& mesh = *mesh_;
-            renderTrack(renderer, mesh, scene, wireframe_, vertexColors_, bounds_, vertexPoints_, yaw_, zoom_);
+            renderTrack(renderer, mesh, scene, wireframe_, vertexColors_, bounds_, vertexPoints_, yaw_, elevation_, zoom_);
             line("Type: vkTrack v3.0.85");
             line("Internal BSP: " + std::to_string(mesh.bspVersion));
             line("Member: " + spyhunter::gui::shorten(mesh.memberName, 34));
@@ -444,7 +498,7 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
         } else {
             const auto& drawable = model_->drawables[selectedDrawable_];
             renderTrack(renderer, drawable, scene, wireframe_, false,
-                        bounds_, vertexPoints_, yaw_, zoom_);
+                        bounds_, vertexPoints_, yaw_, elevation_, zoom_);
             line("Type: vkModel v" + std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
                  std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff));
             line("Member: " + spyhunter::gui::shorten(model_->memberName, 34));
@@ -464,10 +518,11 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("Shader / texture unresolved");
             line("W: wireframe | C: color flag unresolved");
             line("[ / ]: select drawable");
-            line("Arrows: orbit | +/-: zoom");
-            line("Home: reset | F3: diagnostics");
-            line("F4: bounds | V: vertex points");
         }
+        line("Left-drag: orbit | wheel: zoom");
+        line("Arrows: orbit / elevation | +/-: zoom");
+        line("Home: reset | F3: diagnostics");
+        line("F4: bounds | V: vertex points");
         const auto drawGeometryDiagnostics = [&](const auto& geometry) {
             if (!diagnostics_) return;
             const auto stats = diagnose(geometry);
@@ -480,7 +535,8 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("U: " + pair(stats.uvMinimum[0], stats.uvMaximum[0]));
             line("V: " + pair(stats.uvMinimum[1], stats.uvMaximum[1]));
             line("Degenerate triangle slots: " + std::to_string(stats.degenerateTriangles));
-            line("Yaw / zoom: " + std::to_string(yaw_) + " / " + std::to_string(zoom_));
+            line("Yaw / elev (rad) / zoom (x): " + std::to_string(yaw_) + " / " +
+                 std::to_string(elevation_) + " / " + std::to_string(zoom_));
         };
         if (mesh_) drawGeometryDiagnostics(*mesh_);
         else drawGeometryDiagnostics(model_->drawables[selectedDrawable_]);

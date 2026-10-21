@@ -568,12 +568,19 @@ int main(int argc, char* argv[])
         const float height = pixelHeight / spyhunter::gui::defaultUiScale;
         const float browserLeft = (std::max)(0.0f, width - kBrowser.width);
         const SDL_FRect browserRect{browserLeft, 0.0f, width - browserLeft, height};
+        const SDL_FRect modelViewport{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)};
         const float browserRowsTop = kBrowser.top + 30.0f;
         const size_t visibleRows = (std::max)(1, static_cast<int>((height - browserRowsTop - 44.0f) / kBrowser.rowHeight));
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) running = false;
+            else if ((event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                      event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL ||
+                      event.type == SDL_EVENT_WINDOW_FOCUS_LOST) &&
+                     modelViewer.handleEvent(event, modelViewport)) {
+                // The active 3D scene owns orbit dragging and wheel zoom.
+            }
             else if (event.type == SDL_EVENT_KEY_DOWN) {
                 if (searchEditing) {
                     if (event.key.key == SDLK_ESCAPE) {
@@ -602,7 +609,7 @@ int main(int argc, char* argv[])
                         cutscene.stop(); audioPlayer.stop(); status = "Playback stopped.";
                     }
                     else running = false;
-                } else if (modelViewer.handleEvent(event)) {
+                } else if (modelViewer.handleEvent(event, modelViewport)) {
                     // The active 3D pane owns its inspection controls.
                 } else if (event.key.key == SDLK_1) setFilter(BrowserFilter::all);
                 else if (event.key.key == SDLK_2) setFilter(BrowserFilter::vki);
@@ -689,8 +696,8 @@ int main(int argc, char* argv[])
             SDL_SetRenderDrawColor(renderer, 170, 180, 195, 255);
             spyhunter::gui::text(renderer, 24.0f, 50.0f, spyhunter::gui::shorten(status, 100));
         }
-        if (modelViewer.active()) modelViewer.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
-        else if (cutscene.isPlaying()) cutscene.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
+        if (modelViewer.active()) modelViewer.render(renderer, modelViewport);
+        else if (cutscene.isPlaying()) cutscene.render(renderer, modelViewport);
         else if (stillTexture) {
             const SDL_FRect viewport{16.0f, 72.0f, (std::max)(0.0f, browserLeft - 32.0f),
                                      (std::max)(0.0f, height - (texturePreview ? 118.0f : 88.0f))};
