@@ -31,8 +31,6 @@ public:
                     const SDL_FRect* source = nullptr) const;
     void drawTintedMirrored(SDL_Renderer* renderer, const SDL_FRect& bounds, SDL_Color color,
                             const SDL_FRect& source, bool horizontal, bool vertical) const;
-    void drawTintedUv(SDL_Renderer* renderer, const SDL_FRect& bounds, SDL_Color color,
-                      float u0, float v0, float u1, float v1) const;
     int width() const { return width_; }
     int height() const { return height_; }
 

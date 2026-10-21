@@ -517,20 +517,34 @@ void FrontendMenu::drawMissionLoading() const
 
     const float amount = total == 0 ? 0.0f : static_cast<float>(
         (std::min)(static_cast<double>(completed) / static_cast<double>(total), 1.0));
-    const auto drawBarPart = [this](const float x, const float width, const SDL_Color tint,
-                                    const float u0, const float v0, const float u1, const float v1) {
-        // Original vkSprite UV fields are fixed-point texels (16 units/texel).
-        // Convert those endpoints directly to SDL normalized texture coordinates.
-        missionLoadingBar_.drawTintedUv(renderer_, {x, 405.0f, width, 25.0f}, tint,
-            u0 / 16.0f, v0 / 16.0f, u1 / 16.0f, v1 / 16.0f);
+    // vkSprite stores source RGBA as GS 7-bit channels (color*128). SDL's
+    // source-over path otherwise applies the texture's already decoded alpha
+    // against the tint's source alpha a second time and makes the bar nearly
+    // black. Preserve texture alpha while converting the GS vertex color to
+    // modulation and let SDL apply the texture alpha once.
+    const auto barTint = [](const SDL_Color color) {
+        const auto toByte = [](const Uint8 value) {
+            return static_cast<Uint8>((std::min)(255, (static_cast<int>(value) * 255 + 64) / 128));
+        };
+        return SDL_Color{toByte(color.r), toByte(color.g), toByte(color.b), 255};
+    };
+    const auto drawBarPart = [this, &barTint](const float x, const float width, const SDL_Color tint,
+                                    const float u0, const float v0, const float u1, const float v1,
+                                    const bool mirrorHorizontal = false) {
+        const SDL_FRect source{(std::min)(u0, u1) / 16.0f, (std::min)(v0, v1) / 16.0f,
+                               std::abs(u1 - u0) / 16.0f, std::abs(v1 - v0) / 16.0f};
+        missionLoadingBar_.drawTintedMirrored(renderer_, {x, 405.0f, width, 25.0f}, barTint(tint),
+            source, mirrorHorizontal || u1 < u0, v1 < v0);
     };
     drawBarPart(200.0f, 128.0f, blue, 0.0f, 512.0f, 4096.0f, 0.0f);
-    drawBarPart(327.0f, 128.0f, blue, 4096.0f, 512.0f, 0.0f, 0.0f);
+    drawBarPart(327.0f, 128.0f, blue, 0.0f, 512.0f, 4096.0f, 0.0f, true);
     drawBarPart(200.0f, 30.0f, lightBlue, 0.0f, 512.0f, 1000.0f, 0.0f);
     const float fillWidth = 216.0f * amount;
-    drawBarPart(230.0f, fillWidth, lightBlue, 1000.0f, 512.0f,
-                1000.0f + 16.0f * fillWidth, 0.0f);
-    if (amount > 0.99f) drawBarPart(443.0f, 10.0f, lightBlue, 300.0f, 512.0f, 0.0f, 0.0f);
+    if (fillWidth > 0.0f)
+        drawBarPart(230.0f, fillWidth, lightBlue, 1000.0f, 512.0f,
+                    1000.0f + 16.0f * fillWidth, 0.0f);
+    if (amount > 0.99f)
+        drawBarPart(443.0f, 10.0f, lightBlue, 0.0f, 512.0f, 300.0f, 0.0f, true);
     if (!finished) {
         const auto percent = static_cast<int>(amount * 100.0f);
         const auto percentText = "HOST READ " + std::to_string(percent) + "%";

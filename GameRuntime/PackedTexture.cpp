@@ -125,27 +125,6 @@ void PackedTexture::drawTintedMirrored(SDL_Renderer* renderer, const SDL_FRect& 
     SDL_SetTextureAlphaMod(texture_, 255);
 }
 
-void PackedTexture::drawTintedUv(SDL_Renderer* renderer, const SDL_FRect& bounds, const SDL_Color color,
-                                const float u0, const float v0, const float u1, const float v1) const
-{
-    if (!texture_ || width_ <= 0 || height_ <= 0 || u0 == u1 || v0 == v1) return;
-    SDL_Vertex vertices[4]{};
-    const SDL_FPoint points[4]{{bounds.x, bounds.y}, {bounds.x + bounds.w, bounds.y},
-                               {bounds.x + bounds.w, bounds.y + bounds.h}, {bounds.x, bounds.y + bounds.h}};
-    const SDL_FPoint uv[4]{{u0 / width_, v0 / height_}, {u1 / width_, v0 / height_},
-                           {u1 / width_, v1 / height_}, {u0 / width_, v1 / height_}};
-    for (int index = 0; index < 4; ++index) {
-        vertices[index].position = points[index];
-        vertices[index].color = {static_cast<float>(color.r) / 255.0f,
-                                 static_cast<float>(color.g) / 255.0f,
-                                 static_cast<float>(color.b) / 255.0f,
-                                 static_cast<float>(color.a) / 255.0f};
-        vertices[index].tex_coord = uv[index];
-    }
-    const int indices[]{0, 1, 2, 0, 2, 3};
-    SDL_RenderGeometry(renderer, texture_, vertices, 4, indices, 6);
-}
-
 void PackedTexture::drawRounded(SDL_Renderer* renderer, const SDL_FRect& bounds) const
 {
     if (!texture_ || bounds.w <= 0.0f || bounds.h <= 0.0f) return;
