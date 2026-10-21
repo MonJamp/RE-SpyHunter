@@ -5,6 +5,7 @@
 #include "../GameRuntime/StillTexture.h"
 #include "../GameRuntime/VkfTextureFont.h"
 #include "MissionLevelLoading.h"
+#include "Mission1Flythrough.h"
 #include "../GameRuntime/TrackPreviewRenderer.h"
 #include "../GameUI/MenuSelection.h"
 #include "../GameUI/MenuAxisRepeat.h"
@@ -81,6 +82,7 @@ private:
     void drawMissionLoading() const;
     void drawMissionLevelPreview() const;
     bool prepareMissionLevelPreview(std::string& error);
+    bool updateMissionLevelPreview(std::string& error);
     bool saveProfiles(std::string& error) const;
     void drawCentered(std::string_view text, float yFromBottom, float scale = 1.0f) const;
 
@@ -152,6 +154,10 @@ private:
     bool missionLoadFinished_ = false;
     bool missionLoadSucceeded_ = false;
     std::optional<runtime::TrackGeometryImport> missionTrack_;
+    std::optional<runtime::TrackBatchGeometry> missionScene_;
+    std::optional<Mission1Flythrough> mission1Flythrough_;
+    float missionTourElapsedSeconds_ = 0.0f;
+    Uint64 missionTourLastUpdatedAtMs_ = 0;
     struct SdlTextureDeleter { void operator()(SDL_Texture* texture) const { if (texture) SDL_DestroyTexture(texture); } };
     std::unique_ptr<SDL_Texture, SdlTextureDeleter> missionTrackPreviewTexture_;
     runtime::TrackPreviewStats missionTrackPreviewStats_;

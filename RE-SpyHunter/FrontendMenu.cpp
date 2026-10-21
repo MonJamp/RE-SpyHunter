@@ -371,6 +371,7 @@ void FrontendMenu::update()
             case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
             case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
             case MissionLoadStage::trackGeometry: label = "BUILDING TRACK GEOMETRY"; break;
+            case MissionLoadStage::introSetup: label = "BUILDING MISSION INTRO SCENE"; break;
             }
             status_ = missionLoadFinished_ ?
                 (missionLoadSucceeded_ ? "TRACK IMPORT COMPLETE; BUILDING DEPTH VIEW" : missionLoadError_) :
@@ -379,7 +380,11 @@ void FrontendMenu::update()
         }
         if (preparePreview) {
             std::string previewError;
-            if (prepareMissionLevelPreview(previewError)) screen_ = Screen::levelPreview;
+            if (prepareMissionLevelPreview(previewError)) {
+                missionTourElapsedSeconds_ = 0.0f;
+                missionTourLastUpdatedAtMs_ = SDL_GetTicks();
+                screen_ = Screen::levelPreview;
+            }
             else {
                 std::lock_guard lock(missionLoadMutex_);
                 missionLoadSucceeded_ = false;
@@ -387,6 +392,17 @@ void FrontendMenu::update()
                 status_ = missionLoadError_;
             }
         }
+        return;
+    }
+    if (screen_ == Screen::levelPreview) {
+        const Uint64 now = SDL_GetTicks();
+        const float elapsed = missionTourLastUpdatedAtMs_ == 0 || now < missionTourLastUpdatedAtMs_
+            ? 0.0f : static_cast<float>(now - missionTourLastUpdatedAtMs_) / 1000.0f;
+        missionTourLastUpdatedAtMs_ = now;
+        // The original start-state update caps the simulation delta at 0.05 s.
+        missionTourElapsedSeconds_ = (std::min)(34.0f, missionTourElapsedSeconds_ + (std::min)(elapsed, 0.05f));
+        std::string frameError;
+        if (!updateMissionLevelPreview(frameError)) status_ = std::move(frameError);
         return;
     }
     const auto nowMs = SDL_GetTicks();
@@ -570,6 +586,10 @@ void FrontendMenu::startMissionLoad()
         missionLoadFinished_ = false;
         missionLoadSucceeded_ = false;
         missionTrack_.reset();
+        missionScene_.reset();
+        mission1Flythrough_.reset();
+        missionTourElapsedSeconds_ = 0.0f;
+        missionTourLastUpdatedAtMs_ = 0;
         missionTrackPreviewTexture_.reset();
         missionTrackPreviewStats_ = {};
     }
@@ -601,8 +621,26 @@ void FrontendMenu::startMissionLoad()
             loaded = runtime::importTrackBatch(extractedRoot / "PG1" / "PG1.PCK",
                 "new_provinggrounds.trk", 74, 5, stop, track, error);
         }
+        Mission1Flythrough flythrough;
+        runtime::TrackBatchGeometry scene;
+        if (loaded) {
+            {
+                std::lock_guard lock(missionLoadMutex_);
+                missionLoadStage_ = MissionLoadStage::introSetup;
+                missionLoadItem_ = "PG1.AI / camera paths / 48 intro placements";
+            }
+            loaded = loadMission1Flythrough(extractedRoot / "PG1" / "PG1.AI", flythrough, error);
+            if (loaded) {
+                scene = track.selected;
+                loaded = appendMission1IntroProxies(flythrough, scene, error);
+            }
+        }
         std::lock_guard lock(missionLoadMutex_);
-        if (loaded) missionTrack_ = std::move(track);
+        if (loaded) {
+            missionTrack_ = std::move(track);
+            missionScene_ = std::move(scene);
+            mission1Flythrough_ = std::move(flythrough);
+        }
         missionLoadSucceeded_ = loaded;
         missionLoadError_ = std::move(error);
         missionLoadFinished_ = true;
@@ -703,10 +741,15 @@ void FrontendMenu::drawMissionLoading() const
 
 bool FrontendMenu::prepareMissionLevelPreview(std::string& error)
 {
-    if (!missionTrack_) { error = "Track geometry is unavailable for the depth view."; return false; }
+    if (!missionTrack_ || !missionScene_ || !mission1Flythrough_) {
+        error = "Mission 1 track or authored fly-through setup is unavailable.";
+        return false;
+    }
     runtime::TrackPreviewRenderer previewRenderer;
     std::vector<std::uint8_t> pixels;
-    if (!previewRenderer.render(missionTrack_->selected, static_cast<std::uint32_t>(canvasWidth),
+    runtime::TrackPreviewCamera camera;
+    if (!evaluateMission1Flythrough(*mission1Flythrough_, missionTourElapsedSeconds_, camera, error) ||
+        !previewRenderer.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
                                 static_cast<std::uint32_t>(canvasHeight), pixels,
                                 missionTrackPreviewStats_, error)) return false;
     std::unique_ptr<SDL_Texture, SdlTextureDeleter> texture(SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
@@ -722,6 +765,27 @@ bool FrontendMenu::prepareMissionLevelPreview(std::string& error)
     return true;
 }
 
+bool FrontendMenu::updateMissionLevelPreview(std::string& error)
+{
+    if (!missionScene_ || !mission1Flythrough_ || !missionTrackPreviewTexture_) {
+        error = "Mission 1 fly-through scene or presentation texture is unavailable.";
+        return false;
+    }
+    runtime::TrackPreviewCamera camera;
+    if (!evaluateMission1Flythrough(*mission1Flythrough_, missionTourElapsedSeconds_, camera, error)) return false;
+    runtime::TrackPreviewRenderer previewRenderer;
+    std::vector<std::uint8_t> pixels;
+    if (!previewRenderer.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
+                                static_cast<std::uint32_t>(canvasHeight), pixels,
+                                missionTrackPreviewStats_, error)) return false;
+    if (!SDL_UpdateTexture(missionTrackPreviewTexture_.get(), nullptr, pixels.data(),
+                           static_cast<int>(canvasWidth) * 4)) {
+        error = "Could not update the Mission 1 fly-through frame: " + std::string(SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
 void FrontendMenu::drawMissionLevelPreview() const
 {
     SDL_SetRenderDrawColor(renderer_, 4, 8, 13, 255);
@@ -729,8 +793,8 @@ void FrontendMenu::drawMissionLevelPreview() const
     if (missionTrackPreviewTexture_)
         SDL_RenderTexture(renderer_, missionTrackPreviewTexture_.get(), nullptr, nullptr);
     constexpr SDL_Color labelColor{160, 189, 216, 255};
-    font_.drawText(renderer_, "MISSION 1 TRACK INSPECTION - LEAF 74 / BATCH 5", 18, 24, canvasHeight, 0.72f, labelColor);
-    font_.drawText(renderer_, "SOFTWARE PERSPECTIVE / DEPTH | ORIGINAL MATERIAL NOT IMPLEMENTED",
+    font_.drawText(renderer_, "MISSION 1 OPENING TOUR - AUTHORED CAMERA PATHS", 18, 24, canvasHeight, 0.72f, labelColor);
+    font_.drawText(renderer_, "48 TEMP OBJECT PROXIES | PARTIAL TRACK / DIAGNOSTIC RENDER",
                    18, 8, canvasHeight, 0.58f, labelColor);
 }
 
@@ -833,6 +897,15 @@ void FrontendMenu::handleEvent(const SDL_Event& event)
         const bool wrongController = which != 0 && (count <= owner || ids[owner] != which);
         SDL_free(ids);
         if (wrongController) return;
+    }
+    if (screen_ == Screen::levelPreview && isAccept(event)) {
+        // Host adaptation: jump to the final authored camera pose. The original
+        // skip path blends to a live follow camera, which is not implemented.
+        missionTourElapsedSeconds_ = 34.0f;
+        missionTourLastUpdatedAtMs_ = SDL_GetTicks();
+        std::string frameError;
+        if (!updateMissionLevelPreview(frameError)) status_ = std::move(frameError);
+        return;
     }
     if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
         const float value = static_cast<float>(event.gaxis.value) / 32767.0f;

@@ -19,6 +19,7 @@
     <ClInclude Include="..\..\ThirdParty\CLI11\CLI11.hpp" />
     <None Include="..\..\ThirdParty\CLI11\LICENSE" />
     <ClCompile Include="..\..\RE-SpyHunter\FrontendMenu.cpp" />
+    <ClCompile Include="..\..\RE-SpyHunter\Mission1Flythrough.cpp" />
     <ClCompile Include="..\..\RE-SpyHunter\MissionLevelLoading.cpp" />
     <ClInclude Include="..\..\RE-SpyHunter\FrontendMenu.h" />
     <ProjectReference Include="..\..\GameRuntime\GameRuntime.vcxproj"><Project>{4d3b8db7-fae5-4f43-8526-f068756cc509}</Project></ProjectReference>

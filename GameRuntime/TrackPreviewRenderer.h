@@ -37,5 +37,9 @@ public:
     bool render(const TrackBatchGeometry& mesh, std::uint32_t width, std::uint32_t height,
                 std::vector<std::uint8_t>& rgba, TrackPreviewStats& stats,
                 std::string& error) const;
+    bool render(const TrackBatchGeometry& mesh, const TrackPreviewCamera& camera,
+                std::uint32_t width, std::uint32_t height,
+                std::vector<std::uint8_t>& rgba, TrackPreviewStats& stats,
+                std::string& error) const;
 };
 }

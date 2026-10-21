@@ -130,6 +130,16 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const std::uin
                                   const std::uint32_t height, std::vector<std::uint8_t>& rgba,
                                   TrackPreviewStats& stats, std::string& error) const
 {
+    TrackPreviewCamera inspectionCamera;
+    inspectionCamera.nearPlane = 0.0f; // internal sentinel: retain the bounds-framed inspection camera
+    return render(mesh, inspectionCamera, width, height, rgba, stats, error);
+}
+
+bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const TrackPreviewCamera& requestedCamera,
+                                  const std::uint32_t width, const std::uint32_t height,
+                                  std::vector<std::uint8_t>& rgba, TrackPreviewStats& stats,
+                                  std::string& error) const
+{
     rgba.clear();
     stats = {};
     error.clear();
@@ -158,15 +168,26 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const std::uin
         for (const auto index : triangle.vertices)
             if (index >= mesh.vertices.size()) { error = "Track preview triangle references an invalid vertex."; return false; }
 
-    stats.camera.target = {(minimum[0] + maximum[0]) * 0.5f,
-                           (minimum[1] + maximum[1]) * 0.5f,
-                           (minimum[2] + maximum[2]) * 0.5f};
-    const float horizontalSpan = (std::max)(maximum[0] - minimum[0], maximum[1] - minimum[1]);
-    const float distance = (std::max)(30.0f, horizontalSpan * 1.75f);
-    const float pitch = stats.camera.pitchDegrees * 0.01745329251994329577f;
-    stats.camera.eye = {stats.camera.target[0],
-                        stats.camera.target[1] - distance * std::cos(pitch),
-                        stats.camera.target[2] + distance * std::sin(pitch)};
+    stats.camera = requestedCamera;
+    if (requestedCamera.nearPlane <= 0.0f) {
+        stats.camera.target = {(minimum[0] + maximum[0]) * 0.5f,
+                               (minimum[1] + maximum[1]) * 0.5f,
+                               (minimum[2] + maximum[2]) * 0.5f};
+        const float horizontalSpan = (std::max)(maximum[0] - minimum[0], maximum[1] - minimum[1]);
+        const float distance = (std::max)(30.0f, horizontalSpan * 1.75f);
+        const float pitch = stats.camera.pitchDegrees * 0.01745329251994329577f;
+        stats.camera.eye = {stats.camera.target[0],
+                            stats.camera.target[1] - distance * std::cos(pitch),
+                            stats.camera.target[2] + distance * std::sin(pitch)};
+    }
+    if (!std::isfinite(stats.camera.eye[0]) || !std::isfinite(stats.camera.eye[1]) ||
+        !std::isfinite(stats.camera.eye[2]) || !std::isfinite(stats.camera.target[0]) ||
+        !std::isfinite(stats.camera.target[1]) || !std::isfinite(stats.camera.target[2]) ||
+        !(stats.camera.verticalFovDegrees > 1.0f && stats.camera.verticalFovDegrees < 179.0f) ||
+        !(stats.camera.nearPlane > 0.0f && stats.camera.farPlane > stats.camera.nearPlane)) {
+        error = "Track preview camera pose or projection is invalid.";
+        return false;
+    }
 
     const std::uint64_t pixelCount = std::uint64_t(width) * height;
     const std::uint64_t rgbaBytes = pixelCount * 4;
@@ -182,17 +203,39 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const std::uin
 
     const float radians = stats.camera.verticalFovDegrees * 0.01745329251994329577f;
     const float focal = (static_cast<float>(height) * 0.5f) / std::tan(radians * 0.5f);
-    const float cameraPitch = stats.camera.pitchDegrees * 0.01745329251994329577f;
-    const float sinPitch = std::sin(cameraPitch);
-    const float cosPitch = std::cos(cameraPitch);
+    const auto subtract = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+        return std::array<float, 3>{a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+    };
+    const auto dot = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    };
+    const auto normalize = [](const std::array<float, 3>& v) {
+        const float length = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        return length > 1.0e-6f && std::isfinite(length)
+            ? std::array<float, 3>{v[0] / length, v[1] / length, v[2] / length}
+            : std::array<float, 3>{};
+    };
+    const auto cross = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+        return std::array<float, 3>{a[1] * b[2] - a[2] * b[1],
+                                    a[2] * b[0] - a[0] * b[2],
+                                    a[0] * b[1] - a[1] * b[0]};
+    };
+    const auto forward = normalize(subtract(stats.camera.target, stats.camera.eye));
+    auto right = normalize(cross(forward, {0.0f, 0.0f, 1.0f}));
+    if (right == std::array<float, 3>{}) right = normalize(cross(forward, {0.0f, 1.0f, 0.0f}));
+    const auto cameraUp = normalize(cross(right, forward));
+    if (forward == std::array<float, 3>{} || right == std::array<float, 3>{} ||
+        cameraUp == std::array<float, 3>{}) {
+        error = "Track preview camera eye and target do not define a usable view basis.";
+        return false;
+    }
     const auto toCamera = [&](const std::uint32_t index) {
         const auto& source = mesh.vertices[index];
         CameraVertex result;
-        result.x = source.position[0] - stats.camera.eye[0];
-        const float relativeY = source.position[1] - stats.camera.eye[1];
-        const float relativeZ = source.position[2] - stats.camera.eye[2];
-        result.y = relativeY * sinPitch + relativeZ * cosPitch;
-        result.depth = relativeY * cosPitch - relativeZ * sinPitch;
+        const auto relative = subtract(source.position, stats.camera.eye);
+        result.x = dot(relative, right);
+        result.y = dot(relative, cameraUp);
+        result.depth = dot(relative, forward);
         for (std::size_t channel = 0; channel < result.color.size(); ++channel)
             result.color[channel] = static_cast<float>((std::min)(255, int(source.color[channel]) * 2));
         return result;

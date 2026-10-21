@@ -10,7 +10,7 @@
 
 namespace spyhunter::game
 {
-enum class MissionLoadStage { staticArchive, staticLevelData, dynamicArchive, levelInitializationData, trackGeometry };
+enum class MissionLoadStage { staticArchive, staticLevelData, dynamicArchive, levelInitializationData, trackGeometry, introSetup };
 
 struct MissionLoadProgress
 {
