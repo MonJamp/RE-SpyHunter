@@ -1,6 +1,7 @@
 #include "../../RE-SpyHunter/FrontendMenu.h"
 #include "../../ThirdParty/CLI11/CLI11.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -20,7 +21,10 @@ struct Options
     std::string region = "full";
     int selection = 0;
     int timeMs = 100;
+    int missionPoints = 0;
     bool filled = false;
+    bool allLevels = false;
+    std::vector<int> completedPrimary;
     std::vector<int> rectFields;
     std::vector<int> path;
     std::optional<SDL_Rect> rect;
@@ -47,6 +51,12 @@ void configureParser(CLI::App& app, Options& options)
     app.add_flag("--filled", options.filled, "Create a temporary profile before rendering");
     app.add_option("--time-ms", options.timeMs, "Background sample time in milliseconds (default: 100)")
         ->check(CLI::Range(0, 8000));
+    app.add_option("--mission-points", options.missionPoints, "Objective points for the mission-select profile fixture")
+        ->check(CLI::Range(0, 1000000));
+    app.add_option("--completed-primary", options.completedPrimary,
+                   "Completed primary mission IDs for the mission-select fixture (comma-separated)")
+        ->delimiter(',')->expected(1, -1)->check(CLI::Range(1, 14));
+    app.add_flag("--all-levels", options.allLevels, "Unlock all missions in the mission-select capture fixture");
     app.add_option("--region", options.region, "Named crop: full, header, table, selection, or footer")
         ->check(CLI::IsMember(std::vector<std::string>{"full", "header", "table", "selection", "footer"}));
     app.add_option("--rect", options.rectFields, "Exact crop x,y,width,height (overrides --region)")
@@ -64,6 +74,11 @@ bool validateOptions(Options& options, std::string& error)
     }
     if (options.screen == "name" && (options.selection != 0 || options.filled)) {
         error = "The name screen does not support --selection or --filled.";
+        return false;
+    }
+    std::sort(options.completedPrimary.begin(), options.completedPrimary.end());
+    if (std::adjacent_find(options.completedPrimary.begin(), options.completedPrimary.end()) != options.completedPrimary.end()) {
+        error = "--completed-primary mission IDs must not be repeated.";
         return false;
     }
     if (!options.rectFields.empty()) {
@@ -159,6 +174,15 @@ int main(const int argc, char** argv)
     std::string error;
     spyhunter::game::FrontendMenu menu(renderer.get(), assetsPath, temporaryRoot / "profiles.txt", backgroundPath);
     if (!menu.load(error)) { std::cerr << error << '\n'; return 1; }
+    spyhunter::game::FrontendMenu::MissionProgress missionProgress;
+    missionProgress.objectivePoints = options.missionPoints;
+    missionProgress.allLevelsOverride = options.allLevels;
+    for (const int missionId : options.completedPrimary)
+        missionProgress.primaryObjectivesComplete[static_cast<std::size_t>(missionId - 1)] = true;
+    if (!menu.setMissionProgress(0, missionProgress)) {
+        std::cerr << "Invalid mission-select progress fixture.\n";
+        return 2;
+    }
     if (options.screen == "name") key(menu, SDLK_RETURN);
     if (options.screen == "main" || options.filled) {
         if (!createProfile(menu)) { std::cerr << "Could not create capture profile.\n"; return 1; }

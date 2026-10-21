@@ -78,9 +78,6 @@ constexpr std::array<std::string_view, 13> missionAccessMembers{
     "menu_opr_access_42.rgba", "menu_opr_access_48.rgba", "menu_opr_access_53.rgba",
     "menu_opr_access_57.rgba"};
 constexpr std::array<int, 14> missionAllowanceSeconds{480, 420, 360, 420, 420, 420, 420, 420, 420, 360, 360, 360, 300, 540};
-constexpr int localMissionObjectivePoints = 0;
-constexpr bool localAllLevelsOverride = false;
-constexpr bool localPreviousPrimaryComplete = false;
 
 struct MissionAccess
 {
@@ -89,15 +86,15 @@ struct MissionAccess
     bool previousPrimaryIncomplete = false;
 };
 
-MissionAccess missionAccess(const std::size_t mission)
+MissionAccess missionAccess(const std::size_t mission, const FrontendMenu::MissionProgress& progress)
 {
     if (mission >= missionPointThresholds.size()) return {};
     const bool firstMission = mission == 0;
     const bool insufficientPoints = !firstMission &&
-        localMissionObjectivePoints < missionPointThresholds[mission];
-    const bool previousPrimaryIncomplete = !firstMission && !localPreviousPrimaryComplete;
+        progress.objectivePoints < missionPointThresholds[mission];
+    const bool previousPrimaryIncomplete = !firstMission && !progress.primaryObjectivesComplete[mission - 1];
     return {
-        localAllLevelsOverride || firstMission ||
+        progress.allLevelsOverride || firstMission ||
             (!insufficientPoints && !previousPrimaryIncomplete),
         insufficientPoints,
         previousPrimaryIncomplete
@@ -163,6 +160,13 @@ FrontendMenu::FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& 
                            std::filesystem::path profilePath, std::filesystem::path backgroundPath)
     : renderer_(renderer), root_(root), profilePath_(std::move(profilePath)),
       backgroundPath_(std::move(backgroundPath)) {}
+
+bool FrontendMenu::setMissionProgress(const std::size_t profile, MissionProgress progress)
+{
+    if (profile >= missionProgress_.size() || progress.objectivePoints < 0) return false;
+    missionProgress_[profile] = std::move(progress);
+    return true;
+}
 
 bool FrontendMenu::load(std::string& error, const bool debugProfile,
                         const std::optional<Screen> debugStartScreen)
@@ -378,7 +382,10 @@ void FrontendMenu::accept()
     }
     if (screen_ == Screen::missionSelect) {
         const auto selectedMission = submenuSelection_.index();
-        if (!missionAccess(selectedMission).open) { status_ = "MISSION LOCKED"; return; }
+        if (!missionAccess(selectedMission, missionProgress_[profileSelection_.index()]).open) {
+            status_.clear();
+            return;
+        }
         mission_ = selectedMission;
         open(Screen::briefing);
     } else if (screen_ == Screen::briefing) {
@@ -570,7 +577,8 @@ void FrontendMenu::render() const
         profileFont_.drawText(renderer_, "AGENT", 10, 421, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
         profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100, 421, canvasHeight, 0.8f, gray);
         profileFont_.drawText(renderer_, "OBJECTIVES", 10, 408, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
-        profileFont_.drawText(renderer_, "0", 162, 408, canvasHeight, 0.8f, gray);
+        profileFont_.drawText(renderer_, std::to_string(missionProgress_[profileSelection_.index()].objectivePoints),
+                              162, 408, canvasHeight, 0.8f, gray);
         font_.drawText(renderer_, "MISSION SELECT", 420, 415, canvasHeight, 1.0f, lightBlue);
 
         const SDL_Rect clip{57, 90, 526, 269};
@@ -613,7 +621,7 @@ void FrontendMenu::render() const
             constexpr std::array<float, 5> baselines{236,216,196,176,156};
             for (std::size_t i=0;i<desc.size();++i) font_.drawText(renderer_, desc[i], 200, baselines[i], canvasHeight, 1.35f, white);
         } else {
-            const auto access = missionAccess(selected);
+            const auto access = missionAccess(selected, missionProgress_[profileSelection_.index()]);
             std::size_t line = 0;
             constexpr std::array<float, 5> baselines{236,216,196,176,156};
             if (access.insufficientPoints) {
@@ -798,7 +806,8 @@ void FrontendMenu::render() const
                          310.0f, 0.8f);
             std::string_view detail;
             if (screen_ == Screen::missionSelect)
-                detail = missionAccess(submenuSelection_.index()).open ? "MISSION OPEN" : "MISSION LOCKED";
+                detail = missionAccess(submenuSelection_.index(), missionProgress_[profileSelection_.index()]).open
+                    ? "MISSION OPEN" : "MISSION LOCKED";
             else if (screen_ == Screen::twoPlayer) detail = "MISSION LOCKED";
             else if (screen_ == Screen::musicPlayer) detail = catalogue::musicAssets[submenuSelection_.index()];
             else if (screen_ == Screen::moviePlayer)
@@ -807,7 +816,7 @@ void FrontendMenu::render() const
             drawCentered(detail, 170, 0.7f);
             if (screen_ == Screen::missionSelect) {
                 const auto selectedMission = submenuSelection_.index();
-                const auto access = missionAccess(selectedMission);
+                const auto access = missionAccess(selectedMission, missionProgress_[profileSelection_.index()]);
                 if (access.insufficientPoints) {
                     drawCentered("NOT ENOUGH OBJECTIVE POINTS", 139, 0.62f);
                     drawCentered("TO ACCESS LEVEL.", 123, 0.62f);

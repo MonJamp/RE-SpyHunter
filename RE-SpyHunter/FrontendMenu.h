@@ -47,6 +47,12 @@ public:
         bool operator==(const Options&) const = default;
     };
     const Options& options() const { return options_[profileSelection_.index()]; }
+    struct MissionProgress {
+        int objectivePoints = 0;
+        bool allLevelsOverride = false;
+        std::array<bool, 14> primaryObjectivesComplete{};
+    };
+    bool setMissionProgress(std::size_t profile, MissionProgress progress);
     std::size_t musicLayout() const { return musicLayout_; }
 
 private:
@@ -102,6 +108,7 @@ private:
     std::string pendingName_;
     std::string status_;
     std::array<Options, profileCount> options_{};
+    std::array<MissionProgress, profileCount> missionProgress_{};
     Options entryOptions_;
     std::size_t mission_ = 0;
     std::size_t dossierOpenMissionCount_ = 1;
