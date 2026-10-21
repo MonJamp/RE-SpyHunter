@@ -1,6 +1,6 @@
 # GameRuntime
 
-`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entries from a PCK archive, converts their indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. It supports the 3.0.87 and 3.0.79 256 × 256 layouts with 16-bit glyph records used by `euroStile14.vkf` and `euroStile12.vkf`, plus the compact 3.0.56 128 × 128 layout with 32-bit glyph records used by `Eurobet.vkf`. All three observed variants contain four control and 95 printable ASCII records. Other VKF layouts require separate decoding before use.
+`VkfTextureFont` reads the observed `vkTextureFont`/PSMT8 entries from a PCK archive, converts their indexed atlas and glyph metrics to an SDL texture, and draws text using the game's bottom-origin coordinates. `drawTextScaled` preserves independent horizontal and vertical text scales. It supports the 3.0.87 and 3.0.79 256 × 256 layouts with 16-bit glyph records used by `euroStile14.vkf` and `euroStile12.vkf`, plus the compact 3.0.56 128 × 128 layout with 32-bit glyph records used by `Eurobet.vkf`. All three observed variants contain four control and 95 printable ASCII records. Other VKF layouts require separate decoding before use.
 
 `GameRuntime` is the shared native reconstruction library. Executables such as
 `Tools/SHViewer` and `RE-SpyHunter` own application startup, configuration,

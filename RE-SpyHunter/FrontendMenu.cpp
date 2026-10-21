@@ -27,6 +27,18 @@ constexpr SDL_Color sourceColor(std::uint32_t r, std::uint32_t g, std::uint32_t 
     const auto byte = [](std::uint32_t bits) { return static_cast<Uint8>(std::bit_cast<float>(bits) * 255.0f + 0.5f); };
     return {byte(r), byte(g), byte(b), byte(a)};
 }
+
+// Channels are the recovered setColor() trunc(component × 128) values.
+// Expanding GS 0..128 to SDL 0..255 is a host mapping; final GS texture
+// modulation, blend and framebuffer output remain uncalibrated.
+constexpr SDL_Color missionTextColor(const int r, const int g, const int b, const int a)
+{
+    const auto byte = [](const int channel) {
+        const auto gs = (std::clamp)(channel, 0, 128);
+        return static_cast<Uint8>((gs * 255 + 64) / 128);
+    };
+    return {byte(r), byte(g), byte(b), byte(a)};
+}
 constexpr std::array<SDL_FRect, 4> mainSelectorBounds{{
     {180.0f, 148.0f, 285.0f, 30.0f},
     {170.0f, 188.0f, 300.0f, 30.0f},
@@ -630,22 +642,23 @@ void FrontendMenu::render() const
 
     if (screen_ == Screen::missionSelect) {
         const auto selected = submenuSelection_.index();
-        constexpr auto lightBlue = sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000);
-        constexpr auto orange = sourceColor(0x3ee9a027, 0x3ed78d50, 0, 0x3f666666);
-        constexpr auto red = sourceColor(0x3ec6a7f0, 0x3e851eb8, 0, 0x3f666666);
-        const SDL_Color white{255, 255, 255, 255};
-        const SDL_Color gray{170, 176, 192, 255};
+        constexpr auto lightBlue = missionTextColor(17, 63, 103, 128);
+        constexpr auto blue = missionTextColor(26, 28, 54, 128);
+        constexpr auto white = missionTextColor(97, 100, 109, 115);
+        constexpr auto orange = missionTextColor(58, 53, 0, 115);
+        constexpr auto red = missionTextColor(49, 33, 0, 115);
+        constexpr auto buttonTextOn = missionTextColor(51, 70, 128, 115);
         missionMask_.draw(renderer_, {0, 91, 640, 269}, [&] {
             ui::drawFilledPanel(renderer_, {0, 91, canvasWidth, 269}, {0, 0, 0, 178});
         });
         menuHighlightbar_.draw(renderer_, 0, 87, canvasWidth, 8);
         menuHighlightbar_.draw(renderer_, 0, 354, canvasWidth, 8);
-        profileFont_.drawText(renderer_, "AGENT", 10, 421, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
-        profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100, 421, canvasHeight, 0.8f, gray);
-        profileFont_.drawText(renderer_, "OBJECTIVES", 10, 408, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
-        profileFont_.drawText(renderer_, std::to_string(missionProgress_[profileSelection_.index()].objectivePoints),
-                              162, 408, canvasHeight, 0.8f, gray);
-        font_.drawText(renderer_, "MISSION SELECT", 420, 415, canvasHeight, 1.0f, lightBlue);
+        font_.drawText(renderer_, "AGENT", 10, 421, canvasHeight, 1.0f, blue);
+        font_.drawText(renderer_, profiles_[profileSelection_.index()], 100, 421, canvasHeight, 1.0f, white);
+        font_.drawText(renderer_, "OBJECTIVES", 10, 408, canvasHeight, 1.0f, blue);
+        font_.drawText(renderer_, std::to_string(missionProgress_[profileSelection_.index()].objectivePoints),
+                       162, 408, canvasHeight, 1.0f, white);
+        profileFont_.drawText(renderer_, "MISSION SELECT", 420, 415, canvasHeight, 1.0f, lightBlue);
 
         constexpr std::array<int, 5> cardOffsets{-1, 0, 1, 2, 3};
         for (std::size_t slot = 0; slot < cardOffsets.size(); ++slot) {
@@ -673,34 +686,33 @@ void FrontendMenu::render() const
                 }
             });
         }
-        menuLightbar_.drawTinted(renderer_, {245, 101, 160, 27}, lightBlue);
-        profileFont_.drawText(renderer_, "MISSION", 273, 335, canvasHeight, 0.8f, white);
+        menuLightbar_.drawTinted(renderer_, {200, 88, 256, 32}, lightBlue);
+        font_.drawText(renderer_, "MISSION", 285, 339, canvasHeight, 1.0f, buttonTextOn);
         char missionNumber[3]{};
         std::snprintf(missionNumber, sizeof(missionNumber), "%02d", static_cast<int>(selected + 1));
-        profileFont_.drawText(renderer_, missionNumber, 197, 280, canvasHeight, 2.0f, orange);
+        profileFont_.drawTextScaled(renderer_, missionNumber, 197, 280, canvasHeight, 1.12f, 1.04f, orange);
         const auto missionTitle = catalogue::missions[selected];
         const auto split = missionTitle.rfind(' ');
         const auto title1 = split == std::string_view::npos ? missionTitle : missionTitle.substr(0, split);
         const auto title2 = split == std::string_view::npos ? std::string_view{} : missionTitle.substr(split + 1);
-        profileFont_.drawText(renderer_, title1, 301, 299, canvasHeight, 1.35f, red);
-        if (!title2.empty()) profileFont_.drawText(renderer_, title2, 301, 281, canvasHeight, 1.0f, red);
+        profileFont_.drawTextScaled(renderer_, title1, 301, 299, canvasHeight, 1.0f, 0.8f, red);
+        if (!title2.empty()) profileFont_.drawTextScaled(renderer_, title2, 301, 281, canvasHeight, 1.0f, 0.8f, red);
         if (selected == 0) {
             constexpr std::array<std::string_view, 5> desc{"COMPLETE ONE LAP AROUND", "THE TEST TRACK AT THE IES",
                 "TRAINING FACILITY TO EARN", "SPYHUNTER STATUS AND", "BEGIN OFFICIAL FIELD WORK."};
             constexpr std::array<float, 5> baselines{236,216,196,176,156};
-            for (std::size_t i=0;i<desc.size();++i) font_.drawText(renderer_, desc[i], 200, baselines[i], canvasHeight, 1.35f, white);
+            for (std::size_t i=0;i<desc.size();++i) font_.drawText(renderer_, desc[i], 200, baselines[i], canvasHeight, 1.0f, white);
         } else {
             const auto access = missionAccess(selected, missionProgress_[profileSelection_.index()]);
-            std::size_t line = 0;
-            constexpr std::array<float, 5> baselines{236,216,196,176,156};
             if (access.insufficientPoints) {
-                font_.drawText(renderer_, "NOT ENOUGH OBJECTIVE POINTS", 200, baselines[line++], canvasHeight, 1.0f, white);
-                font_.drawText(renderer_, "TO ACCESS LEVEL.", 200, baselines[line++], canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "NOT ENOUGH OBJECTIVE POINTS", 200, 236, canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "TO ACCESS LEVEL.", 200, 216, canvasHeight, 1.0f, white);
             }
             if (access.previousPrimaryIncomplete) {
-                font_.drawText(renderer_, catalogue::missions[selected - 1], 200, baselines[line++], canvasHeight, 1.0f, white);
-                font_.drawText(renderer_, "PRIMARY OBJECTIVE NOT", 200, baselines[line++], canvasHeight, 1.0f, white);
-                font_.drawText(renderer_, "COMPLETE.", 200, baselines[line], canvasHeight, 1.0f, white);
+                const float predecessorBaseline = access.insufficientPoints ? 186.0f : 236.0f;
+                font_.drawText(renderer_, catalogue::missions[selected - 1], 200, predecessorBaseline, canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "PRIMARY OBJECTIVE NOT", 200, predecessorBaseline - 20, canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "COMPLETE.", 200, predecessorBaseline - 40, canvasHeight, 1.0f, white);
             }
         }
         rendezvousLine_.draw(renderer_, 121, 294);
@@ -709,13 +721,13 @@ void FrontendMenu::render() const
         const auto seconds = missionAllowance(selected,
             missionProgress_[profileSelection_.index()].allLevelsOverride);
         std::snprintf(allowance, sizeof(allowance), "%2d:%02d", seconds/60, seconds%60);
-        profileFont_.drawText(renderer_, allowance, 380, 113, canvasHeight, 1.0f, orange);
+        profileFont_.drawTextScaled(renderer_, allowance, 380, 113, canvasHeight, 1.2f, 1.4f, orange);
         profileFont_.drawText(renderer_, "MIN", 478, 115, canvasHeight, 1.0f, orange);
         ui::drawFilledPanel(renderer_, {0, 407, canvasWidth, 41}, {0,0,0,255});
         navIcon_.draw(renderer_, 80, 408); acceptIcon_.draw(renderer_, 240, 408); backIcon_.draw(renderer_, 440, 408);
-        font_.drawText(renderer_, "NAV", 120, 15, canvasHeight, 1, gray);
-        font_.drawText(renderer_, "ACCEPT", 280, 15, canvasHeight, 1, gray);
-        font_.drawText(renderer_, "BACK", 480, 15, canvasHeight, 1, gray);
+        font_.drawText(renderer_, "NAV", 120, 15, canvasHeight, 1, white);
+        font_.drawText(renderer_, "ACCEPT", 280, 15, canvasHeight, 1, white);
+        font_.drawText(renderer_, "BACK", 480, 15, canvasHeight, 1, white);
         return;
     }
 

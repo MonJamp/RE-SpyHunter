@@ -199,6 +199,12 @@ bool VkfTextureFont::loadFromBytes(const std::vector<std::uint8_t>& bytes, SDL_R
 void VkfTextureFont::drawText(SDL_Renderer* renderer, std::string_view text, float x, float yFromBottom,
                               float canvasHeight, float scale, SDL_Color color) const
 {
+    drawTextScaled(renderer, text, x, yFromBottom, canvasHeight, scale, scale, color);
+}
+
+void VkfTextureFont::drawTextScaled(SDL_Renderer* renderer, std::string_view text, float x, float yFromBottom,
+                                    float canvasHeight, float scaleX, float scaleY, SDL_Color color) const
+{
     if (!texture_ || !renderer) return;
     SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
     SDL_SetTextureAlphaMod(texture_, color.a);
@@ -208,14 +214,14 @@ void VkfTextureFont::drawText(SDL_Renderer* renderer, std::string_view text, flo
         if (character >= glyphs_.size() || !glyphs_[character].present) continue;
         const auto& glyph = glyphs_[character];
         if (glyph.width > 0 && glyph.height > 0) {
-            const SDL_FRect destination{penX + glyph.originX * scale,
-                                        canvasHeight - (penY + glyph.originY * scale) - glyph.height * scale,
-                                        glyph.width * scale, glyph.height * scale};
+            const SDL_FRect destination{penX + glyph.originX * scaleX,
+                                        canvasHeight - (penY + glyph.originY * scaleY) - glyph.height * scaleY,
+                                        glyph.width * scaleX, glyph.height * scaleY};
             // The archived atlas scanlines are bottom-up relative to the glyph UVs.
             SDL_RenderTextureRotated(renderer, texture_, &glyph.source, &destination, 0.0, nullptr, SDL_FLIP_VERTICAL);
         }
-        penX += glyph.advanceX * scale;
-        penY += glyph.advanceY * scale;
+        penX += glyph.advanceX * scaleX;
+        penY += glyph.advanceY * scaleY;
         if (character == '\n' || character == '\r') penX = x;
     }
     SDL_SetTextureColorMod(texture_, 255, 255, 255);
