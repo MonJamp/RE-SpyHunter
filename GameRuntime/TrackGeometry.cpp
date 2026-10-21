@@ -1,4 +1,5 @@
 #include "TrackGeometry.h"
+#include "MeshTopology.h"
 
 #include <algorithm>
 #include <array>
@@ -159,10 +160,10 @@ bool skipArray(EntryCursor& input, const std::uint64_t count, const std::uint64_
 }
 }
 
-bool importTrackBatch(const std::filesystem::path& archivePath, const std::string_view loadName,
+static bool importTrackBatchImpl(const std::filesystem::path& archivePath, const std::string_view loadName,
                       const std::uint32_t selectedLeaf, const std::uint32_t selectedBatch,
                       const std::stop_token stop,
-                      TrackGeometryImport& result, std::string& error)
+                      TrackGeometryImport& result, std::string& error, const TrackLoadOptions& limits)
 {
     result = {};
     error.clear();
@@ -246,9 +247,9 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
     result.memberOffset = entry.offset;
     result.bspVersion = static_cast<std::uint32_t>(version);
 
-    if (!readCount(input, maximumNodes, result.nodes, "BSP node", error) || !skipArray(input, result.nodes, 40, error)) return false;
+    if (!readCount(input, (std::min)(limits.maxNodes, maximumNodes), result.nodes, "BSP node", error) || !skipArray(input, result.nodes, 40, error)) return false;
     std::uint32_t textureCount = 0;
-    if (!readCount(input, maximumTextures, textureCount, "local texture", error)) return false;
+    if (!readCount(input, (std::min)(limits.maxTextures, maximumTextures), textureCount, "local texture", error)) return false;
     std::vector<std::string> textureNames;
     textureNames.reserve(textureCount);
     for (std::uint32_t texture = 0; texture < textureCount; ++texture) {
@@ -281,14 +282,14 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
         textureNames.push_back(std::move(name));
     }
 
-    if (!readCount(input, maximumLeaves, result.leaves, "BSP leaf", error) || selectedLeaf >= result.leaves) {
+    if (!readCount(input, (std::min)(limits.maxLeaves, maximumLeaves), result.leaves, "BSP leaf", error) || selectedLeaf >= result.leaves) {
         if (error.empty()) error = "Requested track leaf is outside the imported BSP.";
         return false;
     }
     bool selectedFound = false;
     for (std::uint32_t leaf = 0; leaf < result.leaves; ++leaf) {
         std::uint16_t leafVertexCount = 0, batchCount = 0;
-        if (!input.u16(leafVertexCount, error) || !input.u16(batchCount, error) || batchCount > maximumBatchesPerLeaf) {
+        if (!input.u16(leafVertexCount, error) || !input.u16(batchCount, error) || batchCount > (std::min)(limits.maxBatchesPerLeaf, maximumBatchesPerLeaf)) {
             if (error.empty()) error = "Unsupported BSP leaf header at leaf " + std::to_string(leaf) + ".";
             return false;
         }
@@ -299,7 +300,7 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
             std::int16_t texture = 0;
             std::uint32_t vertexCount = 0, stripCount = 0;
             if (!input.i16(texture, error) || texture < 0 || static_cast<std::uint32_t>(texture) >= textureCount ||
-                !readCount(input, maximumVerticesPerBatch, vertexCount, "batch vertex", error) ||
+                !readCount(input, (std::min)(limits.maxVerticesPerBatch, maximumVerticesPerBatch), vertexCount, "batch vertex", error) ||
                 !readCount(input, maximumStripsPerBatch, stripCount, "triangle strip", error) || !vertexCount || !stripCount) {
                 if (error.empty()) error = "Malformed track batch at leaf " + std::to_string(leaf) + ".";
                 return false;
@@ -312,6 +313,20 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
                 candidate.texture = texture;
                 candidate.textureName = textureNames[static_cast<std::size_t>(texture)];
                 candidate.batchOffset = batchOffset;
+                const std::uint64_t vertexBytes = std::uint64_t(vertexCount) * sizeof(TrackVertex);
+                const std::uint64_t stripBytes = std::uint64_t(stripCount) * sizeof(std::uint16_t);
+                // Every strip has at least three vertices; retain all source slots.
+                if (stripCount > vertexCount / 3) {
+                    error = "Track strip count cannot fit the declared vertices.";
+                    return false;
+                }
+                const std::uint64_t triangleCount = vertexCount - std::uint64_t(stripCount) * 2;
+                const auto decodedBytes = vertexBytes + stripBytes + triangleCount * sizeof(TrackTriangle);
+                if (decodedBytes > limits.maxDecodedBytes) {
+                    error = "Selected track geometry exceeds the decoded-memory limit.";
+                    return false;
+                }
+                candidate.triangles.reserve(static_cast<std::size_t>(triangleCount));
                 candidate.vertices.reserve(vertexCount);
                 candidate.stripLengths.reserve(stripCount);
             }
@@ -347,16 +362,9 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
                 if (retain) candidate.vertices.push_back(value);
             }
             if (retain) {
-                std::uint32_t base = 0;
-                for (const auto stripLength : candidate.stripLengths) {
-                    for (std::uint32_t i = 2; i < stripLength; ++i) {
-                        const auto a = base + i - 2, b = base + i - 1, c = base + i;
-                        candidate.triangles.push_back({i % 2 == 0
-                            ? std::array<std::uint32_t,3>{a,b,c}
-                            : std::array<std::uint32_t,3>{b,a,c}});
-                    }
-                    base += stripLength;
-                }
+                forEachStripTriangle(candidate.stripLengths, [&](std::size_t, const auto& indices) {
+                    candidate.triangles.push_back({indices});
+                });
                 result.selected = std::move(candidate);
                 selectedFound = true;
             }
@@ -391,6 +399,18 @@ bool importTrackBatch(const std::filesystem::path& archivePath, const std::strin
     return true;
 }
 
+bool importTrackBatch(const std::filesystem::path& archivePath, std::string_view loadName,
+                      std::uint32_t leaf, std::uint32_t batch, std::stop_token stop,
+                      TrackGeometryImport& result, std::string& error,
+                      const TrackLoadOptions& limits)
+{
+    result = {};
+    TrackGeometryImport candidate;
+    if (!importTrackBatchImpl(archivePath, loadName, leaf, batch, stop, candidate, error, limits))
+        return false;
+    result = std::move(candidate);
+    return true;
+}
 bool loadPg1TrackMesh(const std::filesystem::path& archivePath, const PckEntry& entry,
                       const TrackLoadOptions& options, TrackMesh& result, std::string& error)
 {
@@ -408,7 +428,7 @@ bool loadPg1TrackMesh(const std::filesystem::path& archivePath, const PckEntry& 
         error = "SH Viewer track limits are outside the track reader's supported safety bounds.";
         return false;
     }
-    if (!importTrackBatch(archivePath, entry.loadName, options.leafIndex, options.batchIndex, {}, imported, error)) return false;
+    if (!importTrackBatch(archivePath, entry.loadName, options.leafIndex, options.batchIndex, {}, imported, error, options)) return false;
     if (imported.selected.vertices.size() * sizeof(TrackVertex) > options.maxDecodedBytes) {
         error = "Selected mesh exceeds SH Viewer configured decoded-memory limit.";
         return false;

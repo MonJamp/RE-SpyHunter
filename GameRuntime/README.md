@@ -94,3 +94,23 @@ Startup/frontend coordination lives in the main game's `IntroSequence` and `Fron
 Keep configuration-file discovery and executable-specific UI out of this
 library. Add a service only when at least one executable has a concrete use for
 it and its asset behavior is supported by evidence.
+# Graphics preparation refactor — 2026-10-21
+
+`MeshTopology.h` is the common strip-slot traversal used by the track importer,
+SH Viewer drawing and track JSON export. It restarts winding at each strip and
+retains degenerate slots. Callers validate strip lengths/vertex totals first.
+Raw track and VK vertex attributes remain format-specific.
+
+`importTrackBatch` accepts caller limits and publishes an empty result on
+failure; selected geometry payload accounting includes vertices, strips and
+prepared triangles before reserving storage. This is not a total process-memory
+budget. The VK reader also counts retained strips, caps candidate probes and
+accepts a stop token. Its full capped input member and metadata remain separate.
+
+`TrackPreviewRenderer` is a reusable, single-owner session with retained depth
+and camera-space vertex scratch. The frontend retains its RGBA output buffer.
+Clipping uses fixed stack storage; source vertices are transformed once per
+frame. The automatic camera computes a valid positive near plane explicitly;
+the explicit-camera API rejects invalid/non-finite planes. Source color mapping,
+triangle order and raster arithmetic remain unchanged. Model hierarchy,
+materials and scene-instance refactoring remain separate work.

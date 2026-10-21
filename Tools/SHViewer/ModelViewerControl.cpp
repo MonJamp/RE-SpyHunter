@@ -1,4 +1,5 @@
 #include "ModelViewerControl.h"
+#include "../../GameRuntime/MeshTopology.h"
 
 #include "../../GUI/Gui.h"
 
@@ -51,28 +52,22 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
     const float scale = (std::min)(viewport.w, viewport.h) * 0.68f / extent * zoom;
 
     std::vector<Triangle> triangles;
-    std::size_t base = 0;
-    for (const auto stripLength : mesh.stripLengths) {
-        for (std::size_t i = 2; i < stripLength; ++i) {
-            const std::array<std::size_t, 3> indices = (i % 2 == 0)
-                ? std::array<std::size_t, 3>{base + i - 2, base + i - 1, base + i}
-                : std::array<std::size_t, 3>{base + i - 1, base + i - 2, base + i};
-            Triangle triangle;
-            for (std::size_t corner = 0; corner < 3; ++corner) {
-                const auto& source = mesh.vertices[indices[corner]];
-                auto& output = triangle.vertices[corner];
-                output.point = project(source, center, scale, viewport, yaw);
-                output.depth = source.position[0] + source.position[1] + source.position[2];
-                triangle.depth += output.depth;
-                output.color = vertexColors
-                    ? SDL_Color{source.color[0], source.color[1], source.color[2], 255}
-                    : SDL_Color{172, 185, 198, 255};
-            }
-            triangle.depth /= 3.0f;
-            triangles.push_back(triangle);
+    if (!runtime::validateStripLayout(mesh.stripLengths, mesh.vertices.size())) return;
+    runtime::forEachStripTriangle(mesh.stripLengths, [&](std::size_t, const auto& indices) {
+        Triangle triangle;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const auto& source = mesh.vertices[indices[corner]];
+            auto& output = triangle.vertices[corner];
+            output.point = project(source, center, scale, viewport, yaw);
+            output.depth = source.position[0] + source.position[1] + source.position[2];
+            triangle.depth += output.depth;
+            output.color = vertexColors
+                ? SDL_Color{source.color[0], source.color[1], source.color[2], 255}
+                : SDL_Color{172, 185, 198, 255};
         }
-        base += stripLength;
-    }
+        triangle.depth /= 3.0f;
+        triangles.push_back(triangle);
+    });
     std::stable_sort(triangles.begin(), triangles.end(), [](const Triangle& a, const Triangle& b) { return a.depth < b.depth; });
 
     if (!wireframe) {
@@ -287,19 +282,13 @@ bool ModelViewerControl::writeGeometryDebugJson(const std::filesystem::path& out
             << (i + 1 == mesh.vertices.size() ? "\n" : ",\n");
     }
     output << "  ],\n  \"triangles\": [\n";
-    std::size_t triangleIndex = 0, base = 0;
+    std::size_t triangleIndex = 0;
     const auto totalTriangles = triangleSlots(mesh);
-    for (std::size_t strip = 0; strip < mesh.stripLengths.size(); ++strip) {
-        for (std::size_t i = 2; i < mesh.stripLengths[strip]; ++i) {
-            const std::array<std::size_t, 3> indices = (i % 2 == 0)
-                ? std::array<std::size_t, 3>{base + i - 2, base + i - 1, base + i}
-                : std::array<std::size_t, 3>{base + i - 1, base + i - 2, base + i};
-            output << "    {\"strip\": " << strip << ", \"indices\": ["
-                << indices[0] << ", " << indices[1] << ", " << indices[2] << "]}"
-                << (++triangleIndex == totalTriangles ? "\n" : ",\n");
-        }
-        base += mesh.stripLengths[strip];
-    }
+    runtime::forEachStripTriangle(mesh.stripLengths, [&](std::size_t strip, const auto& indices) {
+        output << "    {\"strip\": " << strip << ", \"indices\": ["
+            << indices[0] << ", " << indices[1] << ", " << indices[2] << "]}"
+            << (++triangleIndex == totalTriangles ? "\n" : ",\n");
+    });
     output << "  ]\n}\n";
     if (!output) {
         error = "Failed while writing debug JSON output: " + outputPath.string();

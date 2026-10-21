@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <stop_token>
 #include <vector>
 
 namespace spyhunter::runtime
@@ -48,7 +49,10 @@ struct VkModelGeometry
 struct VkModelLoadOptions
 {
     std::uint64_t maxMemberBytes = 16 * 1024 * 1024;
+    // Retained vertex/strip payload; excludes bounded member input and metadata.
     std::uint64_t maxDecodedBytes = 64 * 1024 * 1024;
+    // Candidate start offsets tried, not a wall-clock execution budget.
+    std::uint64_t maxCandidateProbes = 16 * 1024 * 1024;
     std::uint32_t maxDrawables = 4096;
     std::uint32_t maxVerticesPerDrawable = 250000;
     std::uint32_t maxStripsPerDrawable = 4096;
@@ -59,5 +63,5 @@ struct VkModelLoadOptions
 // unresolved rendering state; they are not applied by this raw-geometry view.
 bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntry& entry,
                          const VkModelLoadOptions& options, VkModelGeometry& result,
-                         std::string& error);
+                         std::string& error, std::stop_token stop = {});
 }

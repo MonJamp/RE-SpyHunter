@@ -67,6 +67,8 @@ struct TrackMesh
 struct TrackLoadOptions
 {
     std::uint32_t leafIndex = 74, batchIndex = 5;
+    // Selected payload: vertices + strips + prepared triangle slots. Archive
+    // index, texture-name metadata and allocator overhead are separate bounds.
     std::uint64_t maxDecodedBytes = 16 * 1024 * 1024;
     std::uint32_t maxNodes = 100'000, maxLeaves = 100'000, maxTextures = 4'096;
     std::uint32_t maxBatchesPerLeaf = 4'096, maxVerticesPerBatch = 65'535;
@@ -83,5 +85,6 @@ bool importTrackBatch(const std::filesystem::path& archivePath,
                       std::uint32_t batch,
                       std::stop_token stop,
                       TrackGeometryImport& result,
-                      std::string& error);
+                      std::string& error,
+                      const TrackLoadOptions& limits = {});
 }

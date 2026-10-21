@@ -592,6 +592,8 @@ void FrontendMenu::startMissionLoad()
         missionTourLastUpdatedAtMs_ = 0;
         missionTrackPreviewTexture_.reset();
         missionTrackPreviewStats_ = {};
+        missionPreviewPixels_ = {};
+        missionPreviewRenderer_ = {};
     }
     open(Screen::missionLoading);
     const auto extractedRoot = missionLoadRoot_.empty() ? root_ : missionLoadRoot_;
@@ -745,17 +747,17 @@ bool FrontendMenu::prepareMissionLevelPreview(std::string& error)
         error = "Mission 1 track or authored fly-through setup is unavailable.";
         return false;
     }
-    runtime::TrackPreviewRenderer previewRenderer;
-    std::vector<std::uint8_t> pixels;
+
+
     runtime::TrackPreviewCamera camera;
     if (!evaluateMission1Flythrough(*mission1Flythrough_, missionTourElapsedSeconds_, camera, error) ||
-        !previewRenderer.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
-                                static_cast<std::uint32_t>(canvasHeight), pixels,
+        !missionPreviewRenderer_.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
+                                static_cast<std::uint32_t>(canvasHeight), missionPreviewPixels_,
                                 missionTrackPreviewStats_, error)) return false;
     std::unique_ptr<SDL_Texture, SdlTextureDeleter> texture(SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
         SDL_TEXTUREACCESS_STATIC, static_cast<int>(canvasWidth), static_cast<int>(canvasHeight)));
     if (!texture) { error = "Could not create level preview texture: " + std::string(SDL_GetError()); return false; }
-    if (!SDL_UpdateTexture(texture.get(), nullptr, pixels.data(), static_cast<int>(canvasWidth) * 4) ||
+    if (!SDL_UpdateTexture(texture.get(), nullptr, missionPreviewPixels_.data(), static_cast<int>(canvasWidth) * 4) ||
         !SDL_SetTextureScaleMode(texture.get(), SDL_SCALEMODE_NEAREST) ||
         !SDL_SetTextureBlendMode(texture.get(), SDL_BLENDMODE_NONE)) {
         error = "Could not upload the software depth image: " + std::string(SDL_GetError());
@@ -773,12 +775,12 @@ bool FrontendMenu::updateMissionLevelPreview(std::string& error)
     }
     runtime::TrackPreviewCamera camera;
     if (!evaluateMission1Flythrough(*mission1Flythrough_, missionTourElapsedSeconds_, camera, error)) return false;
-    runtime::TrackPreviewRenderer previewRenderer;
-    std::vector<std::uint8_t> pixels;
-    if (!previewRenderer.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
-                                static_cast<std::uint32_t>(canvasHeight), pixels,
+
+
+    if (!missionPreviewRenderer_.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
+                                static_cast<std::uint32_t>(canvasHeight), missionPreviewPixels_,
                                 missionTrackPreviewStats_, error)) return false;
-    if (!SDL_UpdateTexture(missionTrackPreviewTexture_.get(), nullptr, pixels.data(),
+    if (!SDL_UpdateTexture(missionTrackPreviewTexture_.get(), nullptr, missionPreviewPixels_.data(),
                            static_cast<int>(canvasWidth) * 4)) {
         error = "Could not update the Mission 1 fly-through frame: " + std::string(SDL_GetError());
         return false;

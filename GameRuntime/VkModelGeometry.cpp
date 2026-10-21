@@ -49,11 +49,12 @@ struct StripRecord
     std::uint32_t version = 0;
 };
 
-std::vector<StripRecord> findStripRecords(const std::vector<std::uint8_t>& bytes)
+std::vector<StripRecord> findStripRecords(const std::vector<std::uint8_t>& bytes, std::uint32_t maximumRecords, std::stop_token stop)
 {
     std::vector<StripRecord> records;
     const std::size_t nameLength = stripsType.size() + 1;
     for (std::size_t at = 0; at + nameLength + 12 <= bytes.size(); ++at) {
+        if ((at % readWindow) == 0 && stop.stop_requested()) return {};
         if (bytes[at] != 'v' || bytes[at + 1] != 'k' ||
             !std::equal(stripsType.begin(), stripsType.end(), bytes.begin() + static_cast<std::ptrdiff_t>(at)) ||
             bytes[at + stripsType.size()] != 0) continue;
@@ -66,6 +67,7 @@ std::vector<StripRecord> findStripRecords(const std::vector<std::uint8_t>& bytes
         if (entryNameLength && bytes[nameLengthOffset + 4 + entryNameLength - 1] != 0) continue;
         const auto objectIndex = readU32(bytes, at - 8);
         if (objectIndex > 65535) continue;
+        if (records.size() >= maximumRecords) return {};
         records.push_back({at, nameLengthOffset + 4 + entryNameLength, objectIndex, version});
     }
     return records;
@@ -74,7 +76,7 @@ std::vector<StripRecord> findStripRecords(const std::vector<std::uint8_t>& bytes
 bool parseVertexStream(const std::vector<std::uint8_t>& bytes, const std::size_t start,
                        const std::size_t end, const StripRecord& record,
                        const VkModelLoadOptions& options, const std::uint64_t decodedSoFar,
-                       VkModelDrawable& result)
+                       VkModelDrawable& result, std::stop_token stop)
 {
     if (start > end || end > bytes.size() || end - start < 12) return false;
     const auto count = readU32(bytes, start);
@@ -92,6 +94,11 @@ bool parseVertexStream(const std::vector<std::uint8_t>& bytes, const std::size_t
     const auto stripCount = readU32(bytes, static_cast<std::size_t>(stripCountOffset64));
     if (stripCount == 0 || stripCount > options.maxStripsPerDrawable ||
         std::uint64_t(stripCount) * 2 > end - static_cast<std::size_t>(stripCountOffset64) - 4) return false;
+
+    const std::uint64_t payloadBytes = std::uint64_t(count) * sizeof(VkModelVertex) +
+                                       std::uint64_t(stripCount) * sizeof(std::uint16_t);
+    if (payloadBytes > options.maxDecodedBytes - (std::min)(decodedSoFar, options.maxDecodedBytes))
+        return false;
 
     std::vector<std::uint16_t> stripLengths;
     stripLengths.reserve(stripCount);
@@ -112,6 +119,7 @@ bool parseVertexStream(const std::vector<std::uint8_t>& bytes, const std::size_t
     vertices.reserve(count);
     auto offset = start + 8;
     for (std::uint32_t i = 0; i < count; ++i) {
+        if ((i % 256) == 0 && stop.stop_requested()) return false;
         VkModelVertex vertex;
         for (auto& component : vertex.position) {
             component = readFloat(bytes, offset);
@@ -150,7 +158,7 @@ std::string versionText(const std::uint32_t version)
 
 bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntry& entry,
                          const VkModelLoadOptions& options, VkModelGeometry& result,
-                         std::string& error)
+                         std::string& error, std::stop_token stop)
 {
     result = {};
     error.clear();
@@ -171,7 +179,7 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
     }
 
     PckArchive archive;
-    if (!archive.open(archivePath, error)) return false;
+    if (!archive.open(archivePath, error, stop)) return false;
     const auto found = std::find_if(archive.entries().begin(), archive.entries().end(), [&](const PckEntry& candidate) {
         return candidate.offset == entry.offset && candidate.size == entry.size && candidate.name == entry.name && candidate.type == entry.type;
     });
@@ -183,6 +191,7 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
 
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(entry.size));
     for (std::uint64_t offset = 0; offset < entry.size; offset += readWindow) {
+        if (stop.stop_requested()) { error = "Model loading cancelled."; return false; }
         const auto amount = static_cast<std::size_t>((std::min)(std::uint64_t(readWindow), entry.size - offset));
         if (archive.readEntry(entryIndex, offset, bytes.data() + static_cast<std::size_t>(offset), amount, error) != amount) {
             if (error.empty()) error = "Short bounded read while loading the vkModel member.";
@@ -190,9 +199,10 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
         }
     }
 
-    const auto records = findStripRecords(bytes);
+    const auto records = findStripRecords(bytes, options.maxDrawables, stop);
+    if (stop.stop_requested()) { error = "Model loading cancelled."; return false; }
     if (records.empty()) {
-        error = "No supported vkPS2TriStrips records were found inside the bounded vkModel member.";
+        error = "No supported vkPS2TriStrips records were found, or the drawable record limit was exceeded.";
         return false;
     }
     if (records.size() > options.maxDrawables) {
@@ -200,6 +210,7 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
         return false;
     }
 
+    std::uint64_t probes = 0;
     std::uint64_t decodedBytes = 0;
     result.archivePath = archivePath.string();
     result.memberName = entry.name;
@@ -211,9 +222,13 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
         VkModelDrawable drawable;
         bool decoded = false;
         for (auto cursor = records[i].bodyOffset; cursor + 12 <= end; ++cursor) {
-            if (parseVertexStream(bytes, cursor, end, records[i], options, decodedBytes, drawable)) {
+            if (stop.stop_requested()) { result = {}; error = "Model loading cancelled."; return false; }
+            if (++probes > options.maxCandidateProbes) {
+                result = {}; error = "Model candidate probe budget exceeded."; return false;
+            }
+            if (parseVertexStream(bytes, cursor, end, records[i], options, decodedBytes, drawable, stop)) {
                 decoded = true;
-                decodedBytes += drawable.vertices.size() * sizeof(VkModelVertex);
+                decodedBytes += drawable.vertices.size() * sizeof(VkModelVertex) + drawable.stripLengths.size() * sizeof(std::uint16_t);
                 break;
             }
         }
@@ -228,6 +243,7 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
                 drawable.stripLengths.size(), drawable.vertexFlags);
         result.drawables.push_back(std::move(drawable));
     }
+    if (stop.stop_requested()) { result = {}; error = "Model loading cancelled."; return false; }
     if (result.drawables.empty()) {
         error = "Found " + std::to_string(records.size()) + " vkPS2TriStrips record(s), but none matched a bounded "
                 "versioned vertex/strip stream. Unsupported records: " + std::to_string(result.unsupportedDrawableRecords) + ".";

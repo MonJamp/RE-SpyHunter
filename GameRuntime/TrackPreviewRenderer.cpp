@@ -12,13 +12,7 @@ namespace
 constexpr std::uint64_t maximumPixels = 1280ull * 896ull;
 constexpr std::uint64_t maximumImageBytes = maximumPixels * 4;
 
-struct CameraVertex
-{
-    float x = 0.0f;
-    float y = 0.0f;
-    float depth = 0.0f;
-    std::array<float, 3> color{};
-};
+using CameraVertex = detail::PreviewCameraVertex;
 
 struct ScreenVertex
 {
@@ -39,12 +33,27 @@ CameraVertex interpolate(const CameraVertex& a, const CameraVertex& b, const flo
     return result;
 }
 
-std::vector<CameraVertex> clipDepth(const std::vector<CameraVertex>& polygon,
+// A triangle clipped by two depth planes has at most five vertices.
+// Eight slots leave headroom without per-triangle heap allocations.
+struct ClipPolygon
+{
+    std::array<CameraVertex, 8> vertices{};
+    std::size_t count = 0;
+    bool empty() const { return count == 0; }
+    std::size_t size() const { return count; }
+    const CameraVertex& back() const { return vertices[count - 1]; }
+    const CameraVertex& operator[](std::size_t i) const { return vertices[i]; }
+    const CameraVertex* begin() const { return vertices.data(); }
+    const CameraVertex* end() const { return vertices.data() + count; }
+    void push_back(const CameraVertex& v) { vertices.at(count++) = v; }
+};
+
+ClipPolygon clipDepth(const ClipPolygon& polygon,
                                     const float plane, const bool keepGreater)
 {
-    std::vector<CameraVertex> clipped;
+    ClipPolygon clipped;
     if (polygon.empty()) return clipped;
-    clipped.reserve(polygon.size() + 1);
+
     auto inside = [=](const CameraVertex& v) {
         return keepGreater ? v.depth >= plane : v.depth <= plane;
     };
@@ -128,22 +137,42 @@ void rasterizeTriangle(const ScreenVertex& a, const ScreenVertex& b, const Scree
 
 bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const std::uint32_t width,
                                   const std::uint32_t height, std::vector<std::uint8_t>& rgba,
-                                  TrackPreviewStats& stats, std::string& error) const
+                                  TrackPreviewStats& stats, std::string& error)
 {
-    TrackPreviewCamera inspectionCamera;
-    inspectionCamera.nearPlane = 0.0f; // internal sentinel: retain the bounds-framed inspection camera
-    return render(mesh, inspectionCamera, width, height, rgba, stats, error);
+    rgba.clear();
+    stats = {};
+    error.clear();
+    if (mesh.vertices.empty()) { error = "Track preview requires vertices."; return false; }
+    std::array<float, 3> minimum = mesh.vertices.front().position, maximum = minimum;
+    for (const auto& vertex : mesh.vertices) {
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            if (!std::isfinite(vertex.position[axis])) {
+                error = "Track preview position is not finite."; return false;
+            }
+            minimum[axis] = (std::min)(minimum[axis], vertex.position[axis]);
+            maximum[axis] = (std::max)(maximum[axis], vertex.position[axis]);
+        }
+    }
+    TrackPreviewCamera camera;
+    for (std::size_t axis = 0; axis < 3; ++axis)
+        camera.target[axis] = minimum[axis] * 0.5f + maximum[axis] * 0.5f;
+    const float span = (std::max)(maximum[0] - minimum[0], maximum[1] - minimum[1]);
+    const float distance = (std::max)(30.0f, span * 1.75f);
+    const float pitch = camera.pitchDegrees * 0.01745329251994329577f;
+    camera.eye = {camera.target[0], camera.target[1] - distance * std::cos(pitch),
+                  camera.target[2] + distance * std::sin(pitch)};
+    return render(mesh, camera, width, height, rgba, stats, error);
 }
 
 bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const TrackPreviewCamera& requestedCamera,
                                   const std::uint32_t width, const std::uint32_t height,
                                   std::vector<std::uint8_t>& rgba, TrackPreviewStats& stats,
-                                  std::string& error) const
+                                  std::string& error)
 {
     rgba.clear();
     stats = {};
     error.clear();
-    if (width < 16 || height < 16 || std::uint64_t(width) * height > maximumPixels) {
+    if (width < 16 || height < 16 || width > 1280 || height > 896 || std::uint64_t(width) * height > maximumPixels) {
         error = "Track preview dimensions are outside the 16..1280 by 16..896 safety range.";
         return false;
     }
@@ -156,34 +185,19 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const TrackPre
         return false;
     }
 
-    std::array<float, 3> minimum{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
-    std::array<float, 3> maximum{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
-    for (const auto& vertex : mesh.vertices) {
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            minimum[axis] = (std::min)(minimum[axis], vertex.position[axis]);
-            maximum[axis] = (std::max)(maximum[axis], vertex.position[axis]);
-        }
-    }
+    for (const auto& vertex : mesh.vertices)
+        for (const float component : vertex.position)
+            if (!std::isfinite(component)) { error = "Track preview position is not finite."; return false; }
     for (const auto& triangle : mesh.triangles)
         for (const auto index : triangle.vertices)
             if (index >= mesh.vertices.size()) { error = "Track preview triangle references an invalid vertex."; return false; }
 
     stats.camera = requestedCamera;
-    if (requestedCamera.nearPlane <= 0.0f) {
-        stats.camera.target = {(minimum[0] + maximum[0]) * 0.5f,
-                               (minimum[1] + maximum[1]) * 0.5f,
-                               (minimum[2] + maximum[2]) * 0.5f};
-        const float horizontalSpan = (std::max)(maximum[0] - minimum[0], maximum[1] - minimum[1]);
-        const float distance = (std::max)(30.0f, horizontalSpan * 1.75f);
-        const float pitch = stats.camera.pitchDegrees * 0.01745329251994329577f;
-        stats.camera.eye = {stats.camera.target[0],
-                            stats.camera.target[1] - distance * std::cos(pitch),
-                            stats.camera.target[2] + distance * std::sin(pitch)};
-    }
     if (!std::isfinite(stats.camera.eye[0]) || !std::isfinite(stats.camera.eye[1]) ||
         !std::isfinite(stats.camera.eye[2]) || !std::isfinite(stats.camera.target[0]) ||
         !std::isfinite(stats.camera.target[1]) || !std::isfinite(stats.camera.target[2]) ||
         !(stats.camera.verticalFovDegrees > 1.0f && stats.camera.verticalFovDegrees < 179.0f) ||
+        !std::isfinite(stats.camera.nearPlane) || !std::isfinite(stats.camera.farPlane) ||
         !(stats.camera.nearPlane > 0.0f && stats.camera.farPlane > stats.camera.nearPlane)) {
         error = "Track preview camera pose or projection is invalid.";
         return false;
@@ -199,7 +213,7 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const TrackPre
     for (std::size_t i = 0; i < rgba.size(); i += 4) {
         rgba[i + 0] = 4; rgba[i + 1] = 8; rgba[i + 2] = 13; rgba[i + 3] = 255;
     }
-    std::vector<float> depthBuffer(static_cast<std::size_t>(pixelCount), std::numeric_limits<float>::infinity());
+    depthBuffer_.assign(static_cast<std::size_t>(pixelCount), std::numeric_limits<float>::infinity());
 
     const float radians = stats.camera.verticalFovDegrees * 0.01745329251994329577f;
     const float focal = (static_cast<float>(height) * 0.5f) / std::tan(radians * 0.5f);
@@ -246,11 +260,16 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const TrackPre
                             source.depth, source.color};
     };
 
+    cameraVertices_.resize(mesh.vertices.size());
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i)
+        cameraVertices_[i] = toCamera(static_cast<std::uint32_t>(i));
+
     stats.inputTriangles = static_cast<std::uint32_t>(mesh.triangles.size());
     for (const auto& triangle : mesh.triangles) {
-        std::vector<CameraVertex> polygon{toCamera(triangle.vertices[0]),
-                                         toCamera(triangle.vertices[1]),
-                                         toCamera(triangle.vertices[2])};
+        ClipPolygon polygon;
+        polygon.push_back(cameraVertices_[triangle.vertices[0]]);
+        polygon.push_back(cameraVertices_[triangle.vertices[1]]);
+        polygon.push_back(cameraVertices_[triangle.vertices[2]]);
         if (std::any_of(polygon.begin(), polygon.end(), [&](const auto& v) { return v.depth < stats.camera.nearPlane; })) {
             ++stats.nearClippedTriangles;
             polygon = clipDepth(polygon, stats.camera.nearPlane, true);
@@ -264,7 +283,7 @@ bool TrackPreviewRenderer::render(const TrackBatchGeometry& mesh, const TrackPre
         const auto first = toScreen(polygon[0]);
         for (std::size_t i = 1; i + 1 < polygon.size(); ++i)
             rasterizeTriangle(first, toScreen(polygon[i]), toScreen(polygon[i + 1]), width, height,
-                              depthBuffer, rgba, stats);
+                              depthBuffer_, rgba, stats);
     }
     return true;
 }

@@ -161,6 +161,8 @@ private:
     struct SdlTextureDeleter { void operator()(SDL_Texture* texture) const { if (texture) SDL_DestroyTexture(texture); } };
     std::unique_ptr<SDL_Texture, SdlTextureDeleter> missionTrackPreviewTexture_;
     runtime::TrackPreviewStats missionTrackPreviewStats_;
+    runtime::TrackPreviewRenderer missionPreviewRenderer_;
+    std::vector<std::uint8_t> missionPreviewPixels_;
     // Declared last so it is joined before the callback state above is destroyed.
     std::jthread missionLoadWorker_;
 };

@@ -9,6 +9,16 @@
 
 namespace spyhunter::runtime
 {
+namespace detail
+{
+struct PreviewCameraVertex
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float depth = 0.0f;
+    std::array<float, 3> color{};
+};
+}
 struct TrackPreviewCamera
 {
     std::array<float, 3> eye{};
@@ -29,17 +39,22 @@ struct TrackPreviewStats
     TrackPreviewCamera camera;
 };
 
-// Deterministic CPU inspection renderer. It owns a color target and depth
-// buffer; SDL remains responsible only for presenting the completed image.
+// Deterministic CPU inspection session. Retains depth/transform scratch;
+// the caller owns the reusable color target. SDL presents the completed image.
 class TrackPreviewRenderer
 {
 public:
     bool render(const TrackBatchGeometry& mesh, std::uint32_t width, std::uint32_t height,
                 std::vector<std::uint8_t>& rgba, TrackPreviewStats& stats,
-                std::string& error) const;
+                std::string& error);
     bool render(const TrackBatchGeometry& mesh, const TrackPreviewCamera& camera,
                 std::uint32_t width, std::uint32_t height,
                 std::vector<std::uint8_t>& rgba, TrackPreviewStats& stats,
-                std::string& error) const;
+                std::string& error);
+
+private:
+    // Reused across frames; one renderer session belongs to one caller/thread.
+    std::vector<float> depthBuffer_;
+    std::vector<detail::PreviewCameraVertex> cameraVertices_;
 };
 }

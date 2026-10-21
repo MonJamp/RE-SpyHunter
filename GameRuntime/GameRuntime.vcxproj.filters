@@ -13,7 +13,7 @@
     <ClCompile Include="PssAudioReader.cpp" />
     <ClInclude Include="PckArchive.h" />
     <ClCompile Include="PckArchive.cpp" />
-    <ClInclude Include="TrackGeometry.h" />
+    <ClInclude Include="TrackGeometry.h" /><ClInclude Include="MeshTopology.h" />
     <ClCompile Include="TrackGeometry.cpp" />
     <ClInclude Include="TrackPreviewRenderer.h" />
     <ClCompile Include="TrackPreviewRenderer.cpp" />
