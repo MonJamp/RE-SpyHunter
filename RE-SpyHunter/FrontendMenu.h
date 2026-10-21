@@ -78,6 +78,15 @@ private:
     runtime::PackedTexture dossierCheckedBox_;
     runtime::PackedTexture dossierUncheckedBox_;
     runtime::PackedTexture profileLightbar_;
+    std::array<std::array<runtime::PackedTexture, 3>, 14> missionScenes_;
+    std::array<std::size_t, 14> missionSceneSlots_{};
+    std::array<double, 14> missionSceneChangedAt_{};
+    std::array<runtime::PackedTexture, 13> missionAccessLabels_;
+    runtime::PackedTexture missionBlue_;
+    runtime::PackedTexture missionOverlay4_;
+    runtime::PackedTexture missionOverlay2_;
+    runtime::PackedTexture missionOverlay3_;
+    runtime::PackedTexture rendezvousLine_;
     runtime::CutsceneSession background_;
     bool backgroundLoaded_ = false;
     std::array<std::string, profileCount> profiles_{};

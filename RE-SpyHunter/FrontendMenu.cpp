@@ -6,6 +6,7 @@
 #include <bit>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <optional>
 #include <span>
@@ -67,6 +68,16 @@ constexpr std::array<std::string_view, 2> deleteLabels{"YES", "NO"};
 // currently has no gameplay progress store, so these source-derived point
 // thresholds are evaluated against zero points and incomplete prerequisites.
 constexpr std::array<int, 14> missionPointThresholds{0, 4, 7, 11, 14, 18, 22, 27, 32, 39, 42, 48, 53, 57};
+constexpr std::array<std::string_view, 14> missionScenePrefixes{
+    "pg1_", "ge1_", "ve1_", "kw1_", "fra_", "pan1_", "pg2_", "eng_", "ge2_", "pan2_",
+    "fr2_", "kw2_", "ve2_", "mid_"};
+constexpr std::array<std::string_view, 13> missionAccessMembers{
+    "menu_opr_access_04.rgba", "menu_opr_access_07.rgba", "menu_opr_access_11.rgba",
+    "menu_opr_access_14.rgba", "menu_opr_access_18.rgba", "menu_opr_access_22.rgba",
+    "menu_opr_access_27.rgba", "menu_opr_access_32.rgba", "menu_opr_access_39.rgba",
+    "menu_opr_access_42.rgba", "menu_opr_access_48.rgba", "menu_opr_access_53.rgba",
+    "menu_opr_access_57.rgba"};
+constexpr std::array<int, 14> missionAllowanceSeconds{480, 420, 360, 420, 420, 420, 420, 420, 420, 360, 360, 360, 300, 540};
 constexpr int localMissionObjectivePoints = 0;
 constexpr bool localAllLevelsOverride = false;
 constexpr bool localPreviousPrimaryComplete = false;
@@ -160,6 +171,21 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
         return false;
     if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
         return false;
+    const auto menuUiArchive = root_ / "DATA" / "MENU.PCK";
+    for (std::size_t index = 0; index < missionScenes_.size(); ++index) {
+        for (std::size_t frame = 0; frame < missionScenes_[index].size(); ++frame) {
+            const auto member = std::string(missionScenePrefixes[index]) + "scene" +
+                std::to_string(frame + 1) + ".rgb";
+            if (!missionScenes_[index][frame].load(menuUiArchive, member, renderer_, error)) return false;
+        }
+    }
+    for (std::size_t index = 0; index < missionAccessLabels_.size(); ++index)
+        if (!missionAccessLabels_[index].load(menuUiArchive, missionAccessMembers[index], renderer_, error)) return false;
+    if (!missionBlue_.load(menuUiArchive, "pg1_blue.rgb", renderer_, error) ||
+        !missionOverlay4_.load(menuUiArchive, "menu_oper_staticimage_4.rgba", renderer_, error) ||
+        !missionOverlay2_.load(menuUiArchive, "menu_oper_staticimage_2.rgba", renderer_, error) ||
+        !missionOverlay3_.load(menuUiArchive, "menu_oper_staticimage_3.rgba", renderer_, error) ||
+        !rendezvousLine_.load(menuUiArchive, "menu_orangeline_rendev_int.rgba", renderer_, error)) return false;
     if (!menuHighlightbar_.load(root_ / "DATA" / "MENU.PCK", "menu_highlightbar.rgba", renderer_, error))
         return false;
     if (!menuLightbar_.load(root_ / "DATA" / "SYSTEM.PCK", "menu_lightbar_1pc.rgba", renderer_, error))
@@ -168,7 +194,6 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
     if (!menuEmptyBox_.load(menuArchive, "menu_empty_box.rgba", renderer_, error) ||
         !menuFilledBox_.load(menuArchive, "menu_filled_box.rgba", renderer_, error))
         return false;
-    const auto menuUiArchive = root_ / "DATA" / "MENU.PCK";
     if (!dossierCheckedBox_.load(menuUiArchive, "menu_checkedbox.rgba", renderer_, error) ||
         !dossierUncheckedBox_.load(menuUiArchive, "menu_uncheckedbox.rgba", renderer_, error))
         return false;
@@ -245,6 +270,16 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
 void FrontendMenu::update()
 {
     if (backgroundLoaded_) background_.update();
+    const double nowSeconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+    if (screen_ == Screen::missionSelect) {
+        for (std::size_t mission = 0; mission < missionSceneSlots_.size(); ++mission) {
+            const double interval = static_cast<double>(std::rand() % 10) + 1.0;
+            if (nowSeconds - missionSceneChangedAt_[mission] > interval) {
+                missionSceneSlots_[mission] = (missionSceneSlots_[mission] + 1) % 5;
+                missionSceneChangedAt_[mission] = nowSeconds;
+            }
+        }
+    }
     if (screen_ == Screen::controller2Options && !hasSecondController()) back();
     const double now = static_cast<double>(SDL_GetTicks()) / 1000.0;
     if (const auto direction = horizontalAxis_.poll(now)) horizontal(direction);
@@ -383,6 +418,10 @@ void FrontendMenu::configure(Screen destination, std::size_t selection)
     menuItems_.clear();
     menuDestinations_.clear();
     menuTitle_.clear();
+    if (destination == Screen::missionSelect) {
+        missionSceneSlots_.fill(0);
+        missionSceneChangedAt_.fill(static_cast<double>(SDL_GetTicks()) / 1000.0);
+    }
     if (const auto node = menuNode(screen_)) {
         menuTitle_ = node->title;
         menuItems_.assign(node->labels.begin(), node->labels.end());
@@ -517,6 +556,90 @@ void FrontendMenu::render() const
     SDL_RenderClear(renderer_);
     const SDL_FRect viewport{0, 0, canvasWidth, canvasHeight};
     if (backgroundLoaded_) background_.render(renderer_, viewport);
+
+    if (screen_ == Screen::missionSelect) {
+        const auto selected = submenuSelection_.index();
+        constexpr auto lightBlue = sourceColor(0x3e09374c, 0x3efd70a4, 0x3f4e978d, 0x3f800000);
+        constexpr auto orange = sourceColor(0x3ee9a027, 0x3ed78d50, 0, 0x3f666666);
+        constexpr auto red = sourceColor(0x3ec6a7f0, 0x3e851eb8, 0, 0x3f666666);
+        const SDL_Color white{255, 255, 255, 255};
+        const SDL_Color gray{170, 176, 192, 255};
+        ui::drawFilledPanel(renderer_, {0, 91, canvasWidth, 269}, {0, 0, 0, 178});
+        menuHighlightbar_.draw(renderer_, 0, 87, canvasWidth, 8);
+        menuHighlightbar_.draw(renderer_, 0, 354, canvasWidth, 8);
+        profileFont_.drawText(renderer_, "AGENT", 10, 421, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
+        profileFont_.drawText(renderer_, profiles_[profileSelection_.index()], 100, 421, canvasHeight, 0.8f, gray);
+        profileFont_.drawText(renderer_, "OBJECTIVES", 10, 408, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
+        profileFont_.drawText(renderer_, "0", 162, 408, canvasHeight, 0.8f, gray);
+        font_.drawText(renderer_, "MISSION SELECT", 420, 415, canvasHeight, 1.0f, lightBlue);
+
+        const SDL_Rect clip{57, 90, 526, 269};
+        SDL_SetRenderClipRect(renderer_, &clip);
+        constexpr std::array<int, 5> cardOffsets{-1, 0, 1, 2, 3};
+        constexpr std::array<float, 5> sourceY{28, 120, 200, 278, 360};
+        for (std::size_t slot = 0; slot < cardOffsets.size(); ++slot) {
+            const auto mission = static_cast<std::size_t>((static_cast<int>(selected) + cardOffsets[slot] +
+                static_cast<int>(missionScenes_.size())) % static_cast<int>(missionScenes_.size()));
+            const SDL_FRect card{60, sourceY[slot], 128, 64};
+            const auto frameSlot = missionSceneSlots_[mission];
+            const auto textureFrame = frameSlot < 3 ? frameSlot : frameSlot - 3;
+            missionScenes_[mission][textureFrame].draw(renderer_, card.x, card.y, card.w, card.h);
+            if (missionPointThresholds[mission] > 0) {
+                const auto badge = static_cast<std::size_t>(std::find(missionPointThresholds.begin()+1,
+                    missionPointThresholds.end(), missionPointThresholds[mission]) - missionPointThresholds.begin() - 1);
+                const auto* overlay = (slot % 3 == 0 ? &missionOverlay4_ : slot % 3 == 1 ? &missionOverlay2_ : &missionOverlay3_);
+                overlay->draw(renderer_, card.x, card.y, 128, 64);
+                if (badge < missionAccessLabels_.size())
+                    missionAccessLabels_[badge].draw(renderer_, card.x, card.y, 128, 64);
+            } else {
+                missionBlue_.draw(renderer_, card.x, card.y, 128, 64);
+            }
+        }
+        SDL_SetRenderClipRect(renderer_, nullptr);
+        menuLightbar_.drawTinted(renderer_, {245, 101, 160, 27}, lightBlue);
+        profileFont_.drawText(renderer_, "MISSION", 273, 335, canvasHeight, 0.8f, white);
+        char missionNumber[3]{};
+        std::snprintf(missionNumber, sizeof(missionNumber), "%02d", static_cast<int>(selected + 1));
+        profileFont_.drawText(renderer_, missionNumber, 197, 280, canvasHeight, 2.0f, orange);
+        const auto missionTitle = catalogue::missions[selected];
+        const auto split = missionTitle.rfind(' ');
+        const auto title1 = split == std::string_view::npos ? missionTitle : missionTitle.substr(0, split);
+        const auto title2 = split == std::string_view::npos ? std::string_view{} : missionTitle.substr(split + 1);
+        profileFont_.drawText(renderer_, title1, 301, 299, canvasHeight, 1.35f, red);
+        if (!title2.empty()) profileFont_.drawText(renderer_, title2, 301, 281, canvasHeight, 1.0f, red);
+        if (selected == 0) {
+            constexpr std::array<std::string_view, 5> desc{"COMPLETE ONE LAP AROUND", "THE TEST TRACK AT THE IES",
+                "TRAINING FACILITY TO EARN", "SPYHUNTER STATUS AND", "BEGIN OFFICIAL FIELD WORK."};
+            constexpr std::array<float, 5> baselines{236,216,196,176,156};
+            for (std::size_t i=0;i<desc.size();++i) font_.drawText(renderer_, desc[i], 200, baselines[i], canvasHeight, 1.35f, white);
+        } else {
+            const auto access = missionAccess(selected);
+            std::size_t line = 0;
+            constexpr std::array<float, 5> baselines{236,216,196,176,156};
+            if (access.insufficientPoints) {
+                font_.drawText(renderer_, "NOT ENOUGH OBJECTIVE POINTS", 200, baselines[line++], canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "TO ACCESS LEVEL.", 200, baselines[line++], canvasHeight, 1.0f, white);
+            }
+            if (access.previousPrimaryIncomplete) {
+                font_.drawText(renderer_, catalogue::missions[selected - 1], 200, baselines[line++], canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "PRIMARY OBJECTIVE NOT", 200, baselines[line++], canvasHeight, 1.0f, white);
+                font_.drawText(renderer_, "COMPLETE.", 200, baselines[line], canvasHeight, 1.0f, white);
+            }
+        }
+        rendezvousLine_.draw(renderer_, 121, 294);
+        profileFont_.drawText(renderer_, "RENDEZVOUS", 212, 114, canvasHeight, 1.0f, white);
+        char allowance[16]{};
+        const auto seconds = missionAllowanceSeconds[selected];
+        std::snprintf(allowance, sizeof(allowance), "%2d:%02d", seconds/60, seconds%60);
+        profileFont_.drawText(renderer_, allowance, 380, 113, canvasHeight, 1.0f, orange);
+        profileFont_.drawText(renderer_, "MIN", 478, 115, canvasHeight, 1.0f, orange);
+        ui::drawFilledPanel(renderer_, {0, 407, canvasWidth, 41}, {0,0,0,255});
+        navIcon_.draw(renderer_, 80, 408); acceptIcon_.draw(renderer_, 240, 408); backIcon_.draw(renderer_, 440, 408);
+        font_.drawText(renderer_, "NAV", 120, 15, canvasHeight, 1, gray);
+        font_.drawText(renderer_, "ACCEPT", 280, 15, canvasHeight, 1, gray);
+        font_.drawText(renderer_, "BACK", 480, 15, canvasHeight, 1, gray);
+        return;
+    }
 
     if (screen_ == Screen::profileSelect) {
         const SDL_Color blue{30, 145, 225, 255};
