@@ -1,0 +1,379 @@
+#include "ModelViewerControl.h"
+
+#include "../../GUI/Gui.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <string>
+#include <vector>
+
+namespace spyhunter::tools
+{
+namespace
+{
+struct ProjectedVertex { SDL_FPoint point{}; float depth = 0.0f; SDL_Color color{}; };
+struct Triangle { std::array<ProjectedVertex, 3> vertices{}; float depth = 0.0f; };
+
+SDL_FPoint project(const runtime::TrackVertex& source, const std::array<float, 3>& center,
+                   const float scale, const SDL_FRect& viewport, const float yaw)
+{
+    const float x = source.position[0] - center[0];
+    const float y = source.position[1] - center[1];
+    const float z = source.position[2] - center[2];
+    const float c = std::cos(yaw), s = std::sin(yaw);
+    const float rx = x * c - y * s;
+    const float ry = x * s + y * c;
+    // Viewer-only isometric camera; the source coordinates remain untouched.
+    return {viewport.x + viewport.w * 0.5f + (rx - ry) * 0.70710678f * scale,
+            viewport.y + viewport.h * 0.52f + (rx + ry) * 0.35355339f * scale - z * 0.8660254f * scale};
+}
+
+void renderTrack(SDL_Renderer* renderer, const runtime::TrackMesh& mesh, const SDL_FRect& viewport,
+                 const bool wireframe, const bool vertexColors, const bool showBounds,
+                 const bool showVertices, const float yaw, const float zoom)
+{
+    if (mesh.vertices.empty() || viewport.w <= 0 || viewport.h <= 0) return;
+    std::array<float, 3> minimum = mesh.vertices.front().position;
+    std::array<float, 3> maximum = minimum;
+    for (const auto& vertex : mesh.vertices) for (std::size_t axis = 0; axis < 3; ++axis) {
+        minimum[axis] = (std::min)(minimum[axis], vertex.position[axis]);
+        maximum[axis] = (std::max)(maximum[axis], vertex.position[axis]);
+    }
+    std::array<float, 3> center{};
+    for (std::size_t axis = 0; axis < 3; ++axis) center[axis] = (minimum[axis] + maximum[axis]) * 0.5f;
+    const float extent = (std::max)({maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2], 0.001f});
+    const float scale = (std::min)(viewport.w, viewport.h) * 0.68f / extent * zoom;
+
+    std::vector<Triangle> triangles;
+    std::size_t base = 0;
+    for (const auto stripLength : mesh.stripLengths) {
+        for (std::size_t i = 2; i < stripLength; ++i) {
+            const std::array<std::size_t, 3> indices = (i % 2 == 0)
+                ? std::array<std::size_t, 3>{base + i - 2, base + i - 1, base + i}
+                : std::array<std::size_t, 3>{base + i - 1, base + i - 2, base + i};
+            Triangle triangle;
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                const auto& source = mesh.vertices[indices[corner]];
+                auto& output = triangle.vertices[corner];
+                output.point = project(source, center, scale, viewport, yaw);
+                output.depth = source.position[0] + source.position[1] + source.position[2];
+                triangle.depth += output.depth;
+                output.color = vertexColors
+                    ? SDL_Color{source.color[0], source.color[1], source.color[2], 255}
+                    : SDL_Color{172, 185, 198, 255};
+            }
+            triangle.depth /= 3.0f;
+            triangles.push_back(triangle);
+        }
+        base += stripLength;
+    }
+    std::stable_sort(triangles.begin(), triangles.end(), [](const Triangle& a, const Triangle& b) { return a.depth < b.depth; });
+
+    if (!wireframe) {
+        std::vector<SDL_Vertex> vertices;
+        std::vector<int> indices;
+        vertices.reserve(triangles.size() * 3);
+        indices.reserve(triangles.size() * 3);
+        for (const auto& triangle : triangles) for (const auto& vertex : triangle.vertices) {
+            indices.push_back(static_cast<int>(vertices.size()));
+            vertices.push_back({vertex.point,
+                {vertex.color.r / 255.0f, vertex.color.g / 255.0f, vertex.color.b / 255.0f, vertex.color.a / 255.0f}, {}});
+        }
+        SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+    }
+    if (wireframe) {
+        SDL_SetRenderDrawColor(renderer, 40, 44, 50, 255);
+        for (const auto& triangle : triangles) for (std::size_t edge = 0; edge < 3; ++edge) {
+            const auto& from = triangle.vertices[edge].point;
+            const auto& to = triangle.vertices[(edge + 1) % 3].point;
+            SDL_RenderLine(renderer, from.x, from.y, to.x, to.y);
+        }
+    }
+    if (showBounds) {
+        std::array<SDL_FPoint, 8> corners{};
+        for (unsigned mask = 0; mask < corners.size(); ++mask) {
+            const std::array<float, 3> point{
+                (mask & 1) ? maximum[0] : minimum[0],
+                (mask & 2) ? maximum[1] : minimum[1],
+                (mask & 4) ? maximum[2] : minimum[2]};
+            corners[mask] = project(runtime::TrackVertex{point}, center, scale, viewport, yaw);
+        }
+        SDL_SetRenderDrawColor(renderer, 220, 54, 48, 255);
+        for (unsigned mask = 0; mask < corners.size(); ++mask)
+            for (unsigned axis = 0; axis < 3; ++axis) {
+                const unsigned other = mask ^ (1u << axis);
+                if (mask < other)
+                    SDL_RenderLine(renderer, corners[mask].x, corners[mask].y, corners[other].x, corners[other].y);
+            }
+    }
+    if (showVertices) {
+        SDL_SetRenderDrawColor(renderer, 24, 92, 220, 255);
+        for (const auto& vertex : mesh.vertices) {
+            const auto point = project(vertex, center, scale, viewport, yaw);
+            SDL_RenderPoint(renderer, point.x, point.y);
+        }
+    }
+}
+
+std::size_t triangleSlots(const runtime::TrackMesh& mesh)
+{
+    std::size_t count = 0;
+    for (const auto length : mesh.stripLengths) count += length - 2;
+    return count;
+}
+
+std::string jsonString(const std::string& value)
+{
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const unsigned char character : value) {
+        switch (character) {
+        case '"': escaped += "\\\""; break;
+        case '\\': escaped += "\\\\"; break;
+        case '\b': escaped += "\\b"; break;
+        case '\f': escaped += "\\f"; break;
+        case '\n': escaped += "\\n"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\t': escaped += "\\t"; break;
+        default:
+            if (character < 0x20) {
+                constexpr char digits[] = "0123456789abcdef";
+                escaped += "\\u00";
+                escaped.push_back(digits[character >> 4]);
+                escaped.push_back(digits[character & 0x0f]);
+            } else escaped.push_back(static_cast<char>(character));
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+struct MeshDiagnostics
+{
+    std::array<float, 3> minimum{}, maximum{};
+    std::array<float, 2> uvMinimum{}, uvMaximum{};
+    std::array<std::uint8_t, 4> colorMinimum{}, colorMaximum{};
+    std::size_t degenerateTriangles = 0;
+};
+
+MeshDiagnostics diagnose(const runtime::TrackMesh& mesh)
+{
+    MeshDiagnostics result;
+    result.minimum = result.maximum = mesh.vertices.front().position;
+    result.uvMinimum = result.uvMaximum = mesh.vertices.front().uv;
+    result.colorMinimum = result.colorMaximum = mesh.vertices.front().color;
+    std::size_t base = 0;
+    for (const auto& stripLength : mesh.stripLengths) {
+        for (std::size_t i = 0; i < stripLength; ++i) {
+            const auto& vertex = mesh.vertices[base + i];
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                result.minimum[axis] = (std::min)(result.minimum[axis], vertex.position[axis]);
+                result.maximum[axis] = (std::max)(result.maximum[axis], vertex.position[axis]);
+            }
+            for (std::size_t axis = 0; axis < 2; ++axis) {
+                result.uvMinimum[axis] = (std::min)(result.uvMinimum[axis], vertex.uv[axis]);
+                result.uvMaximum[axis] = (std::max)(result.uvMaximum[axis], vertex.uv[axis]);
+            }
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                result.colorMinimum[channel] = (std::min)(result.colorMinimum[channel], vertex.color[channel]);
+                result.colorMaximum[channel] = (std::max)(result.colorMaximum[channel], vertex.color[channel]);
+            }
+        }
+        for (std::size_t i = 2; i < stripLength; ++i) {
+            const auto& a = mesh.vertices[base + i - 2].position;
+            const auto& b = mesh.vertices[base + i - 1].position;
+            const auto& c = mesh.vertices[base + i].position;
+            const double abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+            const double acx = c[0] - a[0], acy = c[1] - a[1], acz = c[2] - a[2];
+            const double nx = aby * acz - abz * acy;
+            const double ny = abz * acx - abx * acz;
+            const double nz = abx * acy - aby * acx;
+            if (nx * nx + ny * ny + nz * nz <= 1.0e-20) ++result.degenerateTriangles;
+        }
+        base += stripLength;
+    }
+    return result;
+}
+}
+
+void ModelViewerControl::clear()
+{
+    active_ = false;
+    mesh_.reset();
+    status_.clear();
+    resourceSummary_.clear();
+    yaw_ = 0.0f;
+    zoom_ = 1.0f;
+    wireframe_ = vertexColors_ = false;
+    diagnostics_ = bounds_ = vertexPoints_ = false;
+}
+
+bool ModelViewerControl::openTrack(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
+                                   const runtime::TrackLoadOptions& options, std::string& error)
+{
+    clear();
+    runtime::TrackMesh mesh;
+    if (!runtime::loadPg1TrackMesh(archivePath, entry, options, mesh, error)) return false;
+    mesh_ = std::move(mesh);
+    active_ = true;
+    status_ = "PG1 track fixture loaded; diagnostic host view.";
+    return true;
+}
+
+bool ModelViewerControl::writeGeometryDebugJson(const std::filesystem::path& outputPath, std::string& error) const
+{
+    error.clear();
+    if (!mesh_ || mesh_->vertices.empty()) {
+        error = "No decoded geometry is available to export.";
+        return false;
+    }
+    std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        error = "Could not open debug JSON output path: " + outputPath.string();
+        return false;
+    }
+    const auto& mesh = *mesh_;
+    output << std::setprecision(9)
+        << "{\n  \"format\": \"SHViewer geometry debug v1\",\n"
+        << "  \"interpretation\": \"observed PG1 vkTrack v3.0.85 / BSP v7; host diagnostic view\",\n"
+        << "  \"archive\": " << jsonString(mesh.archivePath) << ",\n"
+        << "  \"member\": " << jsonString(mesh.memberName) << ",\n"
+        << "  \"member_offset\": " << mesh.memberOffset << ",\n"
+        << "  \"batch_offset\": " << mesh.batchOffset << ",\n"
+        << "  \"vertex_data_offset\": " << mesh.vertexDataOffset << ",\n"
+        << "  \"vertex_stride_bytes\": 24,\n"
+        << "  \"leaf_index\": " << mesh.leafIndex << ",\n"
+        << "  \"batch_index\": " << mesh.batchIndex << ",\n"
+        << "  \"bsp_version\": " << mesh.bspVersion << ",\n"
+        << "  \"texture_index\": " << mesh.textureIndex << ",\n"
+        << "  \"texture_name\": " << jsonString(mesh.textureName) << ",\n"
+        << "  \"units\": \"unknown; source coordinates retained\",\n"
+        << "  \"depth_method\": \"painter-order approximation\",\n"
+        << "  \"strip_lengths\": [";
+    for (std::size_t i = 0; i < mesh.stripLengths.size(); ++i)
+        output << (i ? ", " : "") << mesh.stripLengths[i];
+    output << "],\n  \"vertices\": [\n";
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const auto& vertex = mesh.vertices[i];
+        output << "    {\"index\": " << i << ", \"source_offset\": " << mesh.vertexDataOffset + i * 24
+            << ", \"position\": ["
+            << vertex.position[0] << ", " << vertex.position[1] << ", " << vertex.position[2]
+            << "], \"color_rgba\": [" << static_cast<unsigned>(vertex.color[0]) << ", "
+            << static_cast<unsigned>(vertex.color[1]) << ", " << static_cast<unsigned>(vertex.color[2]) << ", "
+            << static_cast<unsigned>(vertex.color[3]) << "], \"uv\": [" << vertex.uv[0] << ", " << vertex.uv[1] << "]}"
+            << (i + 1 == mesh.vertices.size() ? "\n" : ",\n");
+    }
+    output << "  ],\n  \"triangles\": [\n";
+    std::size_t triangleIndex = 0, base = 0;
+    const auto totalTriangles = triangleSlots(mesh);
+    for (std::size_t strip = 0; strip < mesh.stripLengths.size(); ++strip) {
+        for (std::size_t i = 2; i < mesh.stripLengths[strip]; ++i) {
+            const std::array<std::size_t, 3> indices = (i % 2 == 0)
+                ? std::array<std::size_t, 3>{base + i - 2, base + i - 1, base + i}
+                : std::array<std::size_t, 3>{base + i - 1, base + i - 2, base + i};
+            output << "    {\"strip\": " << strip << ", \"indices\": ["
+                << indices[0] << ", " << indices[1] << ", " << indices[2] << "]}"
+                << (++triangleIndex == totalTriangles ? "\n" : ",\n");
+        }
+        base += mesh.stripLengths[strip];
+    }
+    output << "  ]\n}\n";
+    if (!output) {
+        error = "Failed while writing debug JSON output: " + outputPath.string();
+        return false;
+    }
+    return true;
+}
+
+void ModelViewerControl::showUnsupportedResource(const std::filesystem::path& archivePath,
+                                                 const runtime::PckEntry& entry, const std::string& reason)
+{
+    clear();
+    active_ = true;
+    status_ = reason;
+    resourceSummary_ = archivePath.filename().string() + " / " + entry.name + " | " + entry.type +
+        " v" + std::to_string((entry.serializationVersion >> 16) & 0xff) + "." +
+        std::to_string((entry.serializationVersion >> 8) & 0xff) + "." +
+        std::to_string(entry.serializationVersion & 0xffff) + " | bytes [" +
+        std::to_string(entry.offset) + ", " + std::to_string(entry.offset + entry.size) + ")";
+}
+
+bool ModelViewerControl::handleEvent(const SDL_Event& event)
+{
+    if (!active_ || event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return false;
+    switch (event.key.key) {
+    case SDLK_W: wireframe_ = !wireframe_; return true;
+    case SDLK_C: vertexColors_ = !vertexColors_; return true;
+    case SDLK_F3: diagnostics_ = !diagnostics_; return true;
+    case SDLK_F4: bounds_ = !bounds_; return true;
+    case SDLK_V: vertexPoints_ = !vertexPoints_; return true;
+    case SDLK_LEFT: yaw_ -= 0.08f; return true;
+    case SDLK_RIGHT: yaw_ += 0.08f; return true;
+    case SDLK_EQUALS: case SDLK_KP_PLUS: zoom_ *= 1.1f; return true;
+    case SDLK_MINUS: case SDLK_KP_MINUS: zoom_ /= 1.1f; return true;
+    case SDLK_HOME: yaw_ = 0.0f; zoom_ = 1.0f; return true;
+    default: return false;
+    }
+}
+
+void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewport) const
+{
+    if (!active_ || viewport.w <= 0 || viewport.h <= 0) return;
+    spyhunter::gui::panel(renderer, viewport, {23, 27, 32, 255});
+    spyhunter::gui::text(renderer, viewport.x + 16, viewport.y + 12, "3D RESOURCE INSPECTOR | HOST DIAGNOSTIC VIEW");
+    const float panelWidth = (std::min)(diagnostics_ ? 340.0f : 280.0f, viewport.w * (diagnostics_ ? 0.45f : 0.38f));
+    const SDL_FRect scene{viewport.x + 16, viewport.y + 42, viewport.w - panelWidth - 32, viewport.h - 88};
+    spyhunter::gui::panel(renderer, scene, {232, 235, 238, 255});
+    spyhunter::gui::panel(renderer, {scene.x + scene.w + 16, scene.y, panelWidth, scene.h}, {34, 40, 47, 255});
+    if (mesh_) {
+        renderTrack(renderer, *mesh_, scene, wireframe_, vertexColors_, bounds_, vertexPoints_, yaw_, zoom_);
+        const auto& mesh = *mesh_;
+        float y = scene.y + 16;
+        const auto line = [&](const std::string& value) { spyhunter::gui::text(renderer, scene.x + scene.w + 28, y, value); y += diagnostics_ ? 18.0f : 22.0f; };
+        line("Type: vkTrack v3.0.85");
+        line("Internal BSP: " + std::to_string(mesh.bspVersion));
+        line("Member: " + spyhunter::gui::shorten(mesh.memberName, 34));
+        line("Archive: " + spyhunter::gui::shorten(std::filesystem::path(mesh.archivePath).filename().string(), 34));
+        line("Member bytes: " + std::to_string(mesh.memberOffset));
+        line("Batch offset: " + std::to_string(mesh.batchOffset));
+        line("Vertex data offset: " + std::to_string(mesh.vertexDataOffset));
+        line("Leaf / batch: " + std::to_string(mesh.leafIndex) + " / " + std::to_string(mesh.batchIndex));
+        line("Vertices: " + std::to_string(mesh.vertices.size()));
+        line("Strips: " + std::to_string(mesh.stripLengths.size()));
+        line("Triangle slots: " + std::to_string(triangleSlots(mesh)));
+        line("Texture ref: " + std::to_string(mesh.textureIndex));
+        line("Texture: " + (mesh.textureName.empty() ? std::string("<null>") : mesh.textureName));
+        line("Texture unresolved");
+        line("Coordinates retained; units unknown");
+        line("Depth uses painter approximation");
+        line("W: wireframe | C: vertex colors");
+        line("Arrows: orbit | +/-: zoom");
+        line("Home: reset | F3: diagnostics");
+        line("F4: bounds | V: vertex points");
+        if (diagnostics_) {
+            const auto stats = diagnose(mesh);
+            const auto pair = [](const float minimum, const float maximum) {
+                return std::to_string(minimum) + " .. " + std::to_string(maximum);
+            };
+            line("X: " + pair(stats.minimum[0], stats.maximum[0]));
+            line("Y: " + pair(stats.minimum[1], stats.maximum[1]));
+            line("Z: " + pair(stats.minimum[2], stats.maximum[2]));
+            line("U: " + pair(stats.uvMinimum[0], stats.uvMaximum[0]));
+            line("V: " + pair(stats.uvMinimum[1], stats.uvMaximum[1]));
+            line("Degenerate triangle slots: " + std::to_string(stats.degenerateTriangles));
+            line("Yaw / zoom: " + std::to_string(yaw_) + " / " + std::to_string(zoom_));
+        }
+    } else {
+        spyhunter::gui::text(renderer, scene.x + 20, scene.y + 28, "Resource identified; geometry is not available for preview.");
+        spyhunter::gui::text(renderer, scene.x + 20, scene.y + 52, "Parser status and source range are shown at right.");
+        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 16, "PARSER STATUS");
+        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 42, spyhunter::gui::shorten(status_, 36));
+        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 76, spyhunter::gui::shorten(resourceSummary_, 36));
+        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 108, "Source member remains read-only.");
+    }
+}
+}

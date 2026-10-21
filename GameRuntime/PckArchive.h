@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <stop_token>
 #include <vector>
 
 namespace spyhunter::runtime
@@ -15,6 +16,7 @@ struct PckEntry
     // Some valid records have no filename-like field in their serialized header.
     std::string loadName;
     std::string type;
+    std::uint32_t serializationVersion = 0;
     std::uint64_t offset = 0;
     std::uint64_t size = 0;
 };
@@ -22,7 +24,7 @@ struct PckEntry
 class PckArchive
 {
 public:
-    bool open(const std::filesystem::path& path, std::string& error);
+    bool open(const std::filesystem::path& path, std::string& error, std::stop_token stop = {});
     const std::vector<PckEntry>& entries() const { return entries_; }
     const std::string& sourceName() const { return sourceName_; }
     // Reads at most capacity bytes from one serialized entry. Returns bytes read.

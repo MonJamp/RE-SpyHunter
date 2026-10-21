@@ -26,7 +26,8 @@
     <ClCompile><WarningLevel>Level3</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>$(SDL3Root)\include</AdditionalIncludeDirectories></ClCompile>
     <Link><SubSystem>Windows</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation><AdditionalLibraryDirectories>$(SDL3Root)\lib\x64</AdditionalLibraryDirectories><AdditionalDependencies>SDL3.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="main.cpp" /></ItemGroup>
+  <ItemGroup><ClCompile Include="main.cpp" /><ClCompile Include="ModelViewerControl.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="ModelViewerControl.h" /></ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\GUI\GUI.vcxproj"><Project>{66b6ad5d-08ba-474e-b091-1317863d2b15}</Project></ProjectReference>
     <ProjectReference Include="..\..\Configuration\Configuration.vcxproj"><Project>{9d580e44-f782-4532-93ed-7c2e8c7066bd}</Project></ProjectReference>

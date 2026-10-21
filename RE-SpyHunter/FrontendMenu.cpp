@@ -2,6 +2,7 @@
 #include "FrontendCatalogue.h"
 #include "../GameUI/MenuDrawing.h"
 #include "../GameRuntime/PckArchive.h"
+#include "../GameRuntime/TrackPreviewRenderer.h"
 
 #include <algorithm>
 #include <bit>
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -357,19 +359,50 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
 
 void FrontendMenu::update()
 {
-    if (backgroundLoaded_ && screen_ != Screen::missionLoading) background_.update();
+    if (backgroundLoaded_ && screen_ != Screen::missionLoading && screen_ != Screen::levelPreview) background_.update();
     if (screen_ == Screen::missionLoading) {
-        std::lock_guard lock(missionLoadMutex_);
-        std::string label;
-        switch (missionLoadStage_) {
-        case MissionLoadStage::staticArchive: label = "READING STATIC ARCHIVE"; break;
-        case MissionLoadStage::staticLevelData: label = "READING WATER DATA"; break;
-        case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
-        case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
+        bool preparePreview = false;
+        {
+            std::lock_guard lock(missionLoadMutex_);
+            std::string label;
+            switch (missionLoadStage_) {
+            case MissionLoadStage::staticArchive: label = "READING STATIC ARCHIVE"; break;
+            case MissionLoadStage::staticLevelData: label = "READING WATER DATA"; break;
+            case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
+            case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
+            case MissionLoadStage::trackGeometry: label = "BUILDING TRACK GEOMETRY"; break;
+            case MissionLoadStage::introSetup: label = "BUILDING MISSION INTRO SCENE"; break;
+            }
+            status_ = missionLoadFinished_ ?
+                (missionLoadSucceeded_ ? "TRACK IMPORT COMPLETE; BUILDING DEPTH VIEW" : missionLoadError_) :
+                (missionLoadItem_.empty() ? label : label + " - " + missionLoadItem_);
+            preparePreview = missionLoadFinished_ && missionLoadSucceeded_ && missionTrack_ && !missionTrackPreviewTexture_;
         }
-        status_ = missionLoadFinished_ ?
-            (missionLoadSucceeded_ ? "PACKAGE READ COMPLETE; 3D LEVEL DRAWING NOT IMPLEMENTED" : missionLoadError_) :
-            (missionLoadItem_.empty() ? label : label + " - " + missionLoadItem_);
+        if (preparePreview) {
+            std::string previewError;
+            if (prepareMissionLevelPreview(previewError)) {
+                missionTourElapsedSeconds_ = 0.0f;
+                missionTourLastUpdatedAtMs_ = SDL_GetTicks();
+                screen_ = Screen::levelPreview;
+            }
+            else {
+                std::lock_guard lock(missionLoadMutex_);
+                missionLoadSucceeded_ = false;
+                missionLoadError_ = std::move(previewError);
+                status_ = missionLoadError_;
+            }
+        }
+        return;
+    }
+    if (screen_ == Screen::levelPreview) {
+        const Uint64 now = SDL_GetTicks();
+        const float elapsed = missionTourLastUpdatedAtMs_ == 0 || now < missionTourLastUpdatedAtMs_
+            ? 0.0f : static_cast<float>(now - missionTourLastUpdatedAtMs_) / 1000.0f;
+        missionTourLastUpdatedAtMs_ = now;
+        // The original start-state update caps the simulation delta at 0.05 s.
+        missionTourElapsedSeconds_ = (std::min)(34.0f, missionTourElapsedSeconds_ + (std::min)(elapsed, 0.05f));
+        std::string frameError;
+        if (!updateMissionLevelPreview(frameError)) status_ = std::move(frameError);
         return;
     }
     const auto nowMs = SDL_GetTicks();
@@ -506,6 +539,8 @@ void FrontendMenu::accept()
         startMissionLoad();
     } else if (screen_ == Screen::missionLoading) {
         return;
+    } else if (screen_ == Screen::levelPreview) {
+        return;
     } else if (screen_ == Screen::twoPlayer) {
         status_ = "MISSION LOCKED - COMPLETE ALL MISSION OBJECTIVES";
     } else if (screen_ == Screen::settings) {
@@ -550,12 +585,19 @@ void FrontendMenu::startMissionLoad()
         missionLoadTotalBytes_ = 0;
         missionLoadFinished_ = false;
         missionLoadSucceeded_ = false;
+        missionTrack_.reset();
+        missionScene_.reset();
+        mission1Flythrough_.reset();
+        missionTourElapsedSeconds_ = 0.0f;
+        missionTourLastUpdatedAtMs_ = 0;
+        missionTrackPreviewTexture_.reset();
+        missionTrackPreviewStats_ = {};
     }
     open(Screen::missionLoading);
     const auto extractedRoot = missionLoadRoot_.empty() ? root_ : missionLoadRoot_;
     missionLoadWorker_ = std::jthread([this, extractedRoot](const std::stop_token stop) {
         std::string error;
-        const bool loaded = inspectProvingGroundsPackage(extractedRoot, stop,
+        bool loaded = inspectProvingGroundsPackage(extractedRoot, stop,
             [this, stop](const MissionLoadProgress& progress) {
                 if (stop.stop_requested()) return false;
                 const auto capturePause = missionLoadCapturePause_;
@@ -569,7 +611,36 @@ void FrontendMenu::startMissionLoad()
                 if (capturePause.count() > 0) std::this_thread::sleep_for(capturePause);
                 return !stop.stop_requested();
             }, error);
+        runtime::TrackGeometryImport track;
+        if (loaded) {
+            {
+                std::lock_guard lock(missionLoadMutex_);
+                missionLoadStage_ = MissionLoadStage::trackGeometry;
+                missionLoadItem_ = "new_provinggrounds.trk / leaf 74 / batch 5";
+            }
+            loaded = runtime::importTrackBatch(extractedRoot / "PG1" / "PG1.PCK",
+                "new_provinggrounds.trk", 74, 5, stop, track, error);
+        }
+        Mission1Flythrough flythrough;
+        runtime::TrackBatchGeometry scene;
+        if (loaded) {
+            {
+                std::lock_guard lock(missionLoadMutex_);
+                missionLoadStage_ = MissionLoadStage::introSetup;
+                missionLoadItem_ = "PG1.AI / camera paths / 48 intro placements";
+            }
+            loaded = loadMission1Flythrough(extractedRoot / "PG1" / "PG1.AI", flythrough, error);
+            if (loaded) {
+                scene = track.selected;
+                loaded = appendMission1IntroProxies(flythrough, scene, error);
+            }
+        }
         std::lock_guard lock(missionLoadMutex_);
+        if (loaded) {
+            missionTrack_ = std::move(track);
+            missionScene_ = std::move(scene);
+            mission1Flythrough_ = std::move(flythrough);
+        }
         missionLoadSucceeded_ = loaded;
         missionLoadError_ = std::move(error);
         missionLoadFinished_ = true;
@@ -666,6 +737,65 @@ void FrontendMenu::drawMissionLoading() const
         const auto percentText = "HOST READ " + std::to_string(percent) + "%";
         missionLoadingFont_.drawText(renderer_, percentText, 232.0f, 43.0f, canvasHeight, 1.0f, white);
     }
+}
+
+bool FrontendMenu::prepareMissionLevelPreview(std::string& error)
+{
+    if (!missionTrack_ || !missionScene_ || !mission1Flythrough_) {
+        error = "Mission 1 track or authored fly-through setup is unavailable.";
+        return false;
+    }
+    runtime::TrackPreviewRenderer previewRenderer;
+    std::vector<std::uint8_t> pixels;
+    runtime::TrackPreviewCamera camera;
+    if (!evaluateMission1Flythrough(*mission1Flythrough_, missionTourElapsedSeconds_, camera, error) ||
+        !previewRenderer.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
+                                static_cast<std::uint32_t>(canvasHeight), pixels,
+                                missionTrackPreviewStats_, error)) return false;
+    std::unique_ptr<SDL_Texture, SdlTextureDeleter> texture(SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_STATIC, static_cast<int>(canvasWidth), static_cast<int>(canvasHeight)));
+    if (!texture) { error = "Could not create level preview texture: " + std::string(SDL_GetError()); return false; }
+    if (!SDL_UpdateTexture(texture.get(), nullptr, pixels.data(), static_cast<int>(canvasWidth) * 4) ||
+        !SDL_SetTextureScaleMode(texture.get(), SDL_SCALEMODE_NEAREST) ||
+        !SDL_SetTextureBlendMode(texture.get(), SDL_BLENDMODE_NONE)) {
+        error = "Could not upload the software depth image: " + std::string(SDL_GetError());
+        return false;
+    }
+    missionTrackPreviewTexture_ = std::move(texture);
+    return true;
+}
+
+bool FrontendMenu::updateMissionLevelPreview(std::string& error)
+{
+    if (!missionScene_ || !mission1Flythrough_ || !missionTrackPreviewTexture_) {
+        error = "Mission 1 fly-through scene or presentation texture is unavailable.";
+        return false;
+    }
+    runtime::TrackPreviewCamera camera;
+    if (!evaluateMission1Flythrough(*mission1Flythrough_, missionTourElapsedSeconds_, camera, error)) return false;
+    runtime::TrackPreviewRenderer previewRenderer;
+    std::vector<std::uint8_t> pixels;
+    if (!previewRenderer.render(*missionScene_, camera, static_cast<std::uint32_t>(canvasWidth),
+                                static_cast<std::uint32_t>(canvasHeight), pixels,
+                                missionTrackPreviewStats_, error)) return false;
+    if (!SDL_UpdateTexture(missionTrackPreviewTexture_.get(), nullptr, pixels.data(),
+                           static_cast<int>(canvasWidth) * 4)) {
+        error = "Could not update the Mission 1 fly-through frame: " + std::string(SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+void FrontendMenu::drawMissionLevelPreview() const
+{
+    SDL_SetRenderDrawColor(renderer_, 4, 8, 13, 255);
+    SDL_RenderClear(renderer_);
+    if (missionTrackPreviewTexture_)
+        SDL_RenderTexture(renderer_, missionTrackPreviewTexture_.get(), nullptr, nullptr);
+    constexpr SDL_Color labelColor{160, 189, 216, 255};
+    font_.drawText(renderer_, "MISSION 1 OPENING TOUR - AUTHORED CAMERA PATHS", 18, 24, canvasHeight, 0.72f, labelColor);
+    font_.drawText(renderer_, "48 TEMP OBJECT PROXIES | PARTIAL TRACK / DIAGNOSTIC RENDER",
+                   18, 8, canvasHeight, 0.58f, labelColor);
 }
 
 void FrontendMenu::configure(Screen destination, std::size_t selection)
@@ -768,6 +898,15 @@ void FrontendMenu::handleEvent(const SDL_Event& event)
         SDL_free(ids);
         if (wrongController) return;
     }
+    if (screen_ == Screen::levelPreview && isAccept(event)) {
+        // Host adaptation: jump to the final authored camera pose. The original
+        // skip path blends to a live follow camera, which is not implemented.
+        missionTourElapsedSeconds_ = 34.0f;
+        missionTourLastUpdatedAtMs_ = SDL_GetTicks();
+        std::string frameError;
+        if (!updateMissionLevelPreview(frameError)) status_ = std::move(frameError);
+        return;
+    }
     if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
         const float value = static_cast<float>(event.gaxis.value) / 32767.0f;
         if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) horizontalAxis_.setValue(value);
@@ -818,6 +957,10 @@ void FrontendMenu::render() const
     const SDL_FRect viewport{0, 0, canvasWidth, canvasHeight};
     if (screen_ == Screen::missionLoading) {
         drawMissionLoading();
+        return;
+    }
+    if (screen_ == Screen::levelPreview) {
+        drawMissionLevelPreview();
         return;
     }
     if (backgroundLoaded_) background_.render(renderer_, viewport);

@@ -9,16 +9,19 @@
 #include "../../GameRuntime/PckArchive.h"
 #include "../../GameRuntime/VkiImage.h"
 #include "../../GameRuntime/RgbaImage.h"
+#include "ModelViewerControl.h"
 #include "../../GUI/Gui.h"
 #include "../../ThirdParty/CLI11/CLI11.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -35,6 +38,15 @@ struct BrowserRow
 {
     size_t fileIndex;
     std::optional<size_t> memberIndex;
+    std::string memberName;
+    std::string memberType;
+};
+
+struct SearchMember
+{
+    size_t fileIndex = 0;
+    std::string name;
+    std::string type;
 };
 
 enum class BrowserFilter { all, vki, pss, pck, mpk };
@@ -45,6 +57,28 @@ std::string lowercase(std::string value)
         return static_cast<char>(std::tolower(character));
     });
     return value;
+}
+
+bool wildcardMatch(std::string pattern, std::string value)
+{
+    pattern = lowercase(std::move(pattern));
+    value = lowercase(std::move(value));
+    if (pattern.find_first_of("*?") == std::string::npos) pattern = "*" + pattern + "*";
+    size_t patternIndex = 0, valueIndex = 0, lastStar = std::string::npos, retryValue = 0;
+    while (valueIndex < value.size()) {
+        if (patternIndex < pattern.size() && (pattern[patternIndex] == '?' || pattern[patternIndex] == value[valueIndex])) {
+            ++patternIndex;
+            ++valueIndex;
+        } else if (patternIndex < pattern.size() && pattern[patternIndex] == '*') {
+            lastStar = patternIndex++;
+            retryValue = valueIndex;
+        } else if (lastStar != std::string::npos) {
+            patternIndex = lastStar + 1;
+            valueIndex = ++retryValue;
+        } else return false;
+    }
+    while (patternIndex < pattern.size() && pattern[patternIndex] == '*') ++patternIndex;
+    return patternIndex == pattern.size();
 }
 
 std::vector<GameFile> findGameFiles(const std::filesystem::path& root)
@@ -102,7 +136,7 @@ bool supported(const GameFile& file)
 
 bool supported(const spyhunter::runtime::PckEntry& entry)
 {
-    return entry.type == "vkDMATexture" ||
+    return entry.type == "vkTrack" || entry.type == "vkDMATexture" ||
            (entry.type == "vkImage" && lowercase(std::filesystem::path(entry.name).extension().string()) == ".vki");
 }
 
@@ -116,14 +150,20 @@ bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
 int main(int argc, char* argv[])
 {
     std::string configArgument;
-    std::string openArgument, memberArgument, exportArgument, captureArgument;
+    std::string openArgument, memberArgument, exportArgument, captureArgument, geometryDebugArgument;
+    std::uint32_t trackLeaf = 74, trackBatch = 5;
     bool alphaPreview = false;
     CLI::App commandLine{"Browse and preview extracted SpyHunter game files."};
     commandLine.add_option("config", configArgument, "Optional SpyHunter.config path");
     auto* openOption = commandLine.add_option("--open", openArgument, "Open a file relative to the configured game directory");
-    commandLine.add_option("--member", memberArgument, "Open a named PCK member (full name or basename)")->needs(openOption);
+    auto* memberOption = commandLine.add_option("--member", memberArgument, "Open a named PCK member (full name or basename)")->needs(openOption);
     auto* exportOption = commandLine.add_option("--export-image", exportArgument, "Export the selected decoded still as a native-resolution BMP and exit")->needs(openOption);
-    commandLine.add_option("--capture-view", captureArgument, "Save one viewer frame as a BMP and exit")->needs(openOption)->excludes(exportOption);
+    auto* captureOption = commandLine.add_option("--capture-view", captureArgument, "Save one viewer frame as a BMP and exit")->needs(openOption)->excludes(exportOption);
+    commandLine.add_option("--dump-geometry-json", geometryDebugArgument,
+        "Write decoded 3D vertices, strip topology, and source offsets as JSON and exit")
+        ->needs(openOption)->needs(memberOption)->excludes(exportOption)->excludes(captureOption);
+    commandLine.add_option("--leaf", trackLeaf, "Select a PG1 track BSP leaf (default: 74)")->needs(openOption);
+    commandLine.add_option("--batch", trackBatch, "Select a batch within the selected PG1 leaf (default: 5)")->needs(openOption);
     commandLine.add_flag("--alpha", alphaPreview, "Start in alpha-channel view (also applies to image export)")->needs(openOption);
     argv = commandLine.ensure_utf8(argv);
     try {
@@ -167,7 +207,7 @@ int main(int argc, char* argv[])
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("SpyHunter - SH Viewer", spyhunter::gui::defaultWindowWidth,
                                      spyhunter::gui::defaultWindowHeight, SDL_WINDOW_RESIZABLE |
-                                     (exportArgument.empty() && captureArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
+                                     (exportArgument.empty() && captureArgument.empty() && geometryDebugArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
         !spyhunter::gui::configureRenderer(renderer)) {
         SDL_Log("Window or renderer setup failed: %s", SDL_GetError());
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
@@ -176,11 +216,17 @@ int main(int argc, char* argv[])
     BrowserFilter filter = BrowserFilter::all;
     std::vector<size_t> browserFiles;
     std::vector<BrowserRow> browserRows;
+    std::vector<SearchMember> searchablePckMembers;
+    bool pckMembersIndexed = false;
+    std::string searchQuery;
+    bool searchEditing = false;
+    bool searchResultsActive = false;
     size_t selectedIndex = 0, firstVisibleIndex = 0;
     size_t loadedIndex = (std::numeric_limits<size_t>::max)();
     std::optional<size_t> loadedMemberIndex;
     SDL_Texture* stillTexture = nullptr;
     std::optional<DecodedStill> decodedStill;
+    spyhunter::tools::ModelViewerControl modelViewer;
     bool texturePreview = false, checkerboard = true;
     int stillWidth = 0, stillHeight = 0;
     spyhunter::runtime::CutsceneSession cutscene;
@@ -195,19 +241,22 @@ int main(int argc, char* argv[])
     const auto rebuildRows = [&] {
         browserRows.clear();
         for (const size_t fileIndex : browserFiles) {
-            browserRows.push_back({fileIndex, std::nullopt});
+            browserRows.push_back({fileIndex, std::nullopt, {}, {}});
             if (expandedFileIndex == fileIndex) {
                 if (gameFiles[fileIndex].extension == ".mpk") {
                     for (size_t memberIndex = 0; memberIndex < audioArchive.entries().size(); ++memberIndex)
-                        if (supported(audioArchive.entries()[memberIndex])) browserRows.push_back({fileIndex, memberIndex});
+                        if (supported(audioArchive.entries()[memberIndex])) browserRows.push_back({fileIndex, memberIndex, {}, {}});
                 } else {
                     for (size_t memberIndex = 0; memberIndex < archive.entries().size(); ++memberIndex)
-                        browserRows.push_back({fileIndex, memberIndex});
+                        browserRows.push_back({fileIndex, memberIndex, {}, {}});
                 }
             }
         }
     };
     const auto setFilter = [&](const BrowserFilter nextFilter) {
+        searchEditing = searchResultsActive = false;
+        searchQuery.clear();
+        SDL_StopTextInput(window);
         filter = nextFilter;
         expandedFileIndex.reset();
         browserFiles.clear();
@@ -230,7 +279,11 @@ int main(int argc, char* argv[])
 
     const auto activateSelected = [&] {
         if (browserRows.empty()) return;
-        const BrowserRow row = browserRows[selectedIndex];
+        BrowserRow row = browserRows[selectedIndex];
+        if (searchResultsActive && row.memberName.empty()) {
+            searchResultsActive = false;
+            searchQuery.clear();
+        }
         cutscene.stop();
         audioPlayer.stop();
         SDL_DestroyTexture(stillTexture);
@@ -238,9 +291,25 @@ int main(int argc, char* argv[])
         decodedStill.reset();
         texturePreview = false;
         stillWidth = stillHeight = 0;
+        modelViewer.clear();
         loadedIndex = row.fileIndex;
-        loadedMemberIndex = row.memberIndex;
         const GameFile& file = gameFiles[loadedIndex];
+        if (!row.memberName.empty()) {
+            std::string error;
+            if (!archive.open(file.path, error)) {
+                status = "Could not open archive for search result: " + error;
+                return;
+            }
+            const auto member = std::find_if(archive.entries().begin(), archive.entries().end(), [&](const auto& entry) {
+                return lowercase(entry.name) == lowercase(row.memberName);
+            });
+            if (member == archive.entries().end()) {
+                status = "Search result no longer exists in the archive: " + row.memberName;
+                return;
+            }
+            row.memberIndex = static_cast<size_t>(member - archive.entries().begin());
+        }
+        loadedMemberIndex = row.memberIndex;
         if (row.memberIndex) {
             if (file.extension == ".mpk") {
                 const auto& entry = audioArchive.entries()[*row.memberIndex];
@@ -255,6 +324,38 @@ int main(int argc, char* argv[])
             const auto& entry = archive.entries()[*row.memberIndex];
             spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
                 "select member=" + file.displayPath + "/" + entry.name);
+            if (entry.type == "vkTrack") {
+                spyhunter::runtime::TrackLoadOptions options;
+                options.leafIndex = trackLeaf;
+                options.batchIndex = trackBatch;
+                std::string error;
+                if (modelViewer.openTrack(file.path, entry, options, error))
+                {
+                    status = "3D track preview: leaf " + std::to_string(options.leafIndex) +
+                             ", batch " + std::to_string(options.batchIndex) + " (host diagnostic view).";
+                    const auto& mesh = *modelViewer.meshForDiagnostics();
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::debug,
+                        "decoded vkTrack member=" + entry.name + " version=3.0.85 memberOffset=" +
+                        std::to_string(entry.offset) + " batchOffset=" + std::to_string(mesh.batchOffset) +
+                        " leaf=" + std::to_string(mesh.leafIndex) + " batch=" + std::to_string(mesh.batchIndex) +
+                        " vertices=" + std::to_string(mesh.vertices.size()) +
+                        " strips=" + std::to_string(mesh.stripLengths.size()));
+                }
+                else {
+                    modelViewer.showUnsupportedResource(file.path, entry, "Track parser rejected resource: " + error);
+                    status = "Track parser rejected resource: " + error;
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::warning,
+                        "vkTrack parse rejected member=" + entry.name + " offset=" + std::to_string(entry.offset) +
+                        " size=" + std::to_string(entry.size) + " reason=" + error);
+                }
+                return;
+            }
+            if (entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk") {
+                const std::string reason = "Ordinary vkModel hierarchy/drawable parser is not implemented yet.";
+                modelViewer.showUnsupportedResource(file.path, entry, reason);
+                status = reason;
+                return;
+            }
             if (!supported(entry)) {
                 status = "Viewing this PCK member type is not supported: " + entry.type;
                 return;
@@ -331,6 +432,51 @@ int main(int argc, char* argv[])
         }
     };
 
+    const auto applyBrowserSearch = [&] {
+        searchEditing = false;
+        SDL_StopTextInput(window);
+        if (searchQuery.empty()) {
+            searchResultsActive = false;
+            rebuildRows();
+            status = "Search cleared.";
+            selectedIndex = firstVisibleIndex = 0;
+            return;
+        }
+        if (!pckMembersIndexed && (filter == BrowserFilter::all || filter == BrowserFilter::pck)) {
+            for (size_t fileIndex = 0; fileIndex < gameFiles.size(); ++fileIndex) {
+                const auto& file = gameFiles[fileIndex];
+                if (file.extension != ".pck") continue;
+                spyhunter::runtime::PckArchive indexedArchive;
+                std::string error;
+                if (!indexedArchive.open(file.path, error)) {
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::warning,
+                        "search skipped PCK=" + file.displayPath + " reason=" + error);
+                    continue;
+                }
+                for (const auto& entry : indexedArchive.entries())
+                    searchablePckMembers.push_back({fileIndex, entry.name, entry.type});
+            }
+            pckMembersIndexed = true;
+            spyhunter::logging::write("SHViewer", spyhunter::logging::Level::debug,
+                "built PCK member search index entries=" + std::to_string(searchablePckMembers.size()));
+        }
+
+        browserRows.clear();
+        for (const size_t fileIndex : browserFiles)
+            if (wildcardMatch(searchQuery, gameFiles[fileIndex].displayPath))
+                browserRows.push_back({fileIndex, std::nullopt, {}, {}});
+        if (filter == BrowserFilter::all || filter == BrowserFilter::pck) {
+            for (const auto& member : searchablePckMembers)
+                if (wildcardMatch(searchQuery, member.name) || wildcardMatch(searchQuery, member.type))
+                    browserRows.push_back({member.fileIndex, std::nullopt, member.name, member.type});
+        }
+        searchResultsActive = true;
+        selectedIndex = firstVisibleIndex = 0;
+        status = std::to_string(browserRows.size()) + " wildcard matches for " + searchQuery + ". Enter opens; Escape clears search.";
+        spyhunter::logging::write("SHViewer", spyhunter::logging::Level::info,
+            "wildcard search pattern=" + searchQuery + " matches=" + std::to_string(browserRows.size()));
+    };
+
     int exitCode = 0;
     if (!openArgument.empty()) {
         const auto requested = lowercase(std::filesystem::path(openArgument).lexically_normal().generic_string());
@@ -360,6 +506,16 @@ int main(int argc, char* argv[])
             }
         }
     }
+    if (!geometryDebugArgument.empty()) {
+        std::string error;
+        if (exitCode || !modelViewer.writeGeometryDebugJson(geometryDebugArgument, error)) {
+            SDL_Log("Geometry debug export failed: %s", exitCode ? status.c_str() : error.c_str());
+            exitCode = 1;
+        } else {
+            SDL_Log("Exported geometry diagnostics: %s (%s)", geometryDebugArgument.c_str(), status.c_str());
+        }
+        running = false;
+    }
     if (!exportArgument.empty()) {
         if (!decodedStill || exitCode) { SDL_Log("Image export failed: %s", status.c_str()); exitCode = 1; }
         else {
@@ -380,17 +536,42 @@ int main(int argc, char* argv[])
         const float height = pixelHeight / spyhunter::gui::defaultUiScale;
         const float browserLeft = (std::max)(0.0f, width - kBrowser.width);
         const SDL_FRect browserRect{browserLeft, 0.0f, width - browserLeft, height};
-        const size_t visibleRows = (std::max)(1, static_cast<int>((height - kBrowser.top - 44.0f) / kBrowser.rowHeight));
+        const float browserRowsTop = kBrowser.top + 30.0f;
+        const size_t visibleRows = (std::max)(1, static_cast<int>((height - browserRowsTop - 44.0f) / kBrowser.rowHeight));
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) running = false;
             else if (event.type == SDL_EVENT_KEY_DOWN) {
-                if (event.key.key == SDLK_ESCAPE) {
-                    if (cutscene.isPlaying() || audioPlayer.isPlaying()) {
+                if (searchEditing) {
+                    if (event.key.key == SDLK_ESCAPE) {
+                        searchQuery.clear();
+                        applyBrowserSearch();
+                    } else if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) {
+                        applyBrowserSearch();
+                    } else if (event.key.key == SDLK_BACKSPACE && !searchQuery.empty()) {
+                        size_t start = searchQuery.size() - 1;
+                        while (start > 0 && (static_cast<unsigned char>(searchQuery[start]) & 0xc0) == 0x80) --start;
+                        searchQuery.erase(start);
+                    } else if (event.key.key == SDLK_A && (event.key.mod & SDL_KMOD_CTRL) != 0) {
+                        searchQuery.clear();
+                    }
+                } else if (event.key.key == SDLK_F && (event.key.mod & SDL_KMOD_CTRL) != 0) {
+                    searchEditing = true;
+                    SDL_StartTextInput(window);
+                } else if (event.key.key == SDLK_ESCAPE) {
+                    if (searchResultsActive || !searchQuery.empty()) {
+                        searchQuery.clear();
+                        searchResultsActive = false;
+                        rebuildRows();
+                        selectedIndex = firstVisibleIndex = 0;
+                        status = "Search cleared.";
+                    } else if (cutscene.isPlaying() || audioPlayer.isPlaying()) {
                         cutscene.stop(); audioPlayer.stop(); status = "Playback stopped.";
                     }
                     else running = false;
+                } else if (modelViewer.handleEvent(event)) {
+                    // The active 3D pane owns its inspection controls.
                 } else if (event.key.key == SDLK_1) setFilter(BrowserFilter::all);
                 else if (event.key.key == SDLK_2) setFilter(BrowserFilter::vki);
                 else if (event.key.key == SDLK_3) setFilter(BrowserFilter::pss);
@@ -414,6 +595,9 @@ int main(int argc, char* argv[])
                 } else if (!browserRows.empty() && (event.key.key == SDLK_RETURN || event.key.key == SDLK_SPACE)) {
                     activateSelected();
                 }
+            } else if (event.type == SDL_EVENT_TEXT_INPUT && searchEditing) {
+                if (searchQuery.size() + std::strlen(event.text.text) <= 128)
+                    searchQuery += event.text.text;
             } else if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.y != 0.0f) {
                 const size_t maximumFirst = browserRows.size() > visibleRows ? browserRows.size() - visibleRows : 0;
                 if (event.wheel.y < 0.0f) firstVisibleIndex = (std::min)(firstVisibleIndex + 3, maximumFirst);
@@ -424,16 +608,22 @@ int main(int argc, char* argv[])
                        event.button.x / spyhunter::gui::defaultUiScale >= browserLeft) {
                 const float mouseX = event.button.x / spyhunter::gui::defaultUiScale - browserLeft;
                 const float mouseY = event.button.y / spyhunter::gui::defaultUiScale;
-                if (mouseY >= 52.0f && mouseY < 78.0f) {
-                    if (mouseX < 68.0f) setFilter(BrowserFilter::all);
-                    else if (mouseX < 132.0f) setFilter(BrowserFilter::vki);
-                    else if (mouseX < 196.0f) setFilter(BrowserFilter::pss);
-                    else if (mouseX < 260.0f) setFilter(BrowserFilter::pck);
-                    else setFilter(BrowserFilter::mpk);
-                } else if (mouseY >= kBrowser.top) {
-                    const size_t row = static_cast<size_t>((mouseY - kBrowser.top) / kBrowser.rowHeight);
-                    const size_t index = firstVisibleIndex + row;
-                    if (index < browserRows.size() && row < visibleRows) { selectedIndex = index; activateSelected(); }
+                if (mouseY >= 80.0f && mouseY < 108.0f) {
+                    searchEditing = true;
+                    SDL_StartTextInput(window);
+                } else {
+                    if (searchEditing) { searchEditing = false; SDL_StopTextInput(window); }
+                    if (mouseY >= 52.0f && mouseY < 78.0f) {
+                        if (mouseX < 68.0f) setFilter(BrowserFilter::all);
+                        else if (mouseX < 132.0f) setFilter(BrowserFilter::vki);
+                        else if (mouseX < 196.0f) setFilter(BrowserFilter::pss);
+                        else if (mouseX < 260.0f) setFilter(BrowserFilter::pck);
+                        else setFilter(BrowserFilter::mpk);
+                    } else if (mouseY >= browserRowsTop) {
+                        const size_t row = static_cast<size_t>((mouseY - browserRowsTop) / kBrowser.rowHeight);
+                        const size_t index = firstVisibleIndex + row;
+                        if (index < browserRows.size() && row < visibleRows) { selectedIndex = index; activateSelected(); }
+                    }
                 }
             }
         }
@@ -467,7 +657,8 @@ int main(int argc, char* argv[])
             SDL_SetRenderDrawColor(renderer, 170, 180, 195, 255);
             spyhunter::gui::text(renderer, 24.0f, 50.0f, spyhunter::gui::shorten(status, 100));
         }
-        if (cutscene.isPlaying()) cutscene.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
+        if (modelViewer.active()) modelViewer.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
+        else if (cutscene.isPlaying()) cutscene.render(renderer, SDL_FRect{0.0f, 72.0f, browserLeft, (std::max)(0.0f, height - 72.0f)});
         else if (stillTexture) {
             const SDL_FRect viewport{16.0f, 72.0f, (std::max)(0.0f, browserLeft - 32.0f),
                                      (std::max)(0.0f, height - (texturePreview ? 118.0f : 88.0f))};
@@ -500,7 +691,9 @@ int main(int argc, char* argv[])
         SDL_SetRenderDrawColor(renderer, 230, 235, 245, 255);
         spyhunter::gui::text(renderer, browserLeft + 16.0f, 16.0f, "SH VIEWER");
         SDL_SetRenderDrawColor(renderer, 160, 170, 190, 255);
-        spyhunter::gui::text(renderer, browserLeft + 16.0f, 36.0f, std::to_string(browserFiles.size()) + " shown / " + std::to_string(gameFiles.size()) + " game files");
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, 36.0f,
+            std::to_string(searchResultsActive ? browserRows.size() : browserFiles.size()) +
+            (searchResultsActive ? " matches" : " shown") + " / " + std::to_string(gameFiles.size()) + " game files");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::all ? 255 : 155, filter == BrowserFilter::all ? 255 : 170, filter == BrowserFilter::all ? 255 : 190, 255);
         spyhunter::gui::text(renderer, browserLeft + 12.0f, 58.0f, "ALL [1]");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::vki ? 255 : 155, filter == BrowserFilter::vki ? 255 : 170, filter == BrowserFilter::vki ? 255 : 190, 255);
@@ -511,11 +704,16 @@ int main(int argc, char* argv[])
         spyhunter::gui::text(renderer, browserLeft + 204.0f, 58.0f, "PCK [4]");
         SDL_SetRenderDrawColor(renderer, filter == BrowserFilter::mpk ? 255 : 155, filter == BrowserFilter::mpk ? 255 : 170, filter == BrowserFilter::mpk ? 255 : 190, 255);
         spyhunter::gui::text(renderer, browserLeft + 268.0f, 58.0f, "MPK [5]");
+        spyhunter::gui::panel(renderer, {browserLeft + 8.0f, 80.0f, browserRect.w - 16.0f, 24.0f},
+            searchEditing ? SDL_Color{56, 76, 104, 255} : SDL_Color{38, 44, 57, 255});
+        SDL_SetRenderDrawColor(renderer, 205, 215, 230, 255);
+        const std::string searchLabel = searchQuery.empty() ? "Find files or PCK members [Ctrl+F]" : "Find: " + searchQuery + (searchEditing ? "|" : "");
+        spyhunter::gui::text(renderer, browserLeft + 14.0f, 84.0f, spyhunter::gui::shorten(searchLabel, 38));
         for (size_t row = 0; row < visibleRows && firstVisibleIndex + row < browserRows.size(); ++row) {
             const size_t index = firstVisibleIndex + row;
             const BrowserRow& browserRow = browserRows[index];
             const GameFile& file = gameFiles[browserRow.fileIndex];
-            const SDL_FRect rowRect{browserLeft + 8.0f, kBrowser.top + row * kBrowser.rowHeight,
+            const SDL_FRect rowRect{browserLeft + 8.0f, browserRowsTop + row * kBrowser.rowHeight,
                                     browserRect.w - 16.0f, kBrowser.rowHeight - 2.0f};
             if (index == selectedIndex) {
                 spyhunter::gui::panel(renderer, rowRect, SDL_Color{57, 95, 152, 255});
@@ -530,8 +728,14 @@ int main(int argc, char* argv[])
                 if (file.extension == ".mpk") label = "    " + audioArchive.entries()[*browserRow.memberIndex].name;
                 else {
                     const auto& entry = archive.entries()[*browserRow.memberIndex];
-                    label = "    " + entry.name + (supported(entry) ? "" : "  [unsupported]");
+                    const bool modelResource = entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk";
+                    label = "    " + entry.name + (modelResource ? "  [3D model]" : entry.type == "vkTrack" ? "  [3D track]" : supported(entry) ? "" : "  [unsupported]");
                 }
+            } else if (!browserRow.memberName.empty()) {
+                const bool modelResource = browserRow.memberType == "vkModel" ||
+                    lowercase(std::filesystem::path(browserRow.memberName).extension().string()) == ".vk";
+                const std::string kind = modelResource ? " [3D model]" : browserRow.memberType == "vkTrack" ? " [3D track]" : " [PCK member]";
+                label = "    " + browserRow.memberName + " <- " + file.displayPath + kind;
             } else {
                 label = ((file.extension == ".pck" || file.extension == ".mpk") ?
                     (expandedFileIndex == browserRow.fileIndex ? "[-] " : "[+] ") : "") +
@@ -540,7 +744,7 @@ int main(int argc, char* argv[])
             spyhunter::gui::text(renderer, rowRect.x + 6.0f, rowRect.y + 4.0f, spyhunter::gui::shorten(label, 43));
         }
         SDL_SetRenderDrawColor(renderer, 180, 190, 205, 255);
-        spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 48.0f, "Click / Enter: view or play | Esc: stop");
+        spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 48.0f, "Click / Enter: open | Ctrl+F: wildcard search | Esc: clear / stop");
         spyhunter::gui::text(renderer, browserLeft + 16.0f, height - 28.0f, spyhunter::gui::shorten(status, 44));
         if (!captureArgument.empty()) {
             SDL_Surface* pixels = SDL_RenderReadPixels(renderer, nullptr);

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include "../GameRuntime/TrackGeometry.h"
 #include <functional>
 #include <string>
 #include <string_view>
@@ -9,7 +10,7 @@
 
 namespace spyhunter::game
 {
-enum class MissionLoadStage { staticArchive, staticLevelData, dynamicArchive, levelInitializationData };
+enum class MissionLoadStage { staticArchive, staticLevelData, dynamicArchive, levelInitializationData, trackGeometry, introSetup };
 
 struct MissionLoadProgress
 {
