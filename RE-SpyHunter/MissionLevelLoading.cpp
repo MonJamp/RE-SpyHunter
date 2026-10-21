@@ -19,8 +19,8 @@ struct Companion
     const wchar_t* path;
 };
 
-constexpr std::array<Companion, 4> companions{{
-    {L"PG1.AI"}, {L"PG1.WTR"}, {L"OBJECTS.TXT"}, {L"PFX.TXT"}
+constexpr std::array<Companion, 3> initializationCompanions{{
+    {L"PG1.AI"}, {L"OBJECTS.TXT"}, {L"PFX.TXT"}
 }};
 
 bool hasLoadNameSuffix(const spyhunter::runtime::PckArchive& archive, const std::string_view suffix)
@@ -32,7 +32,8 @@ bool hasLoadNameSuffix(const spyhunter::runtime::PckArchive& archive, const std:
 }
 
 bool readArchive(const std::filesystem::path& path, const MissionLoadStage stage,
-                 const std::function<void(const MissionLoadProgress&)>& progress,
+                 std::stop_token stop,
+                 const std::function<bool(const MissionLoadProgress&)>& progress,
                  std::string& error)
 {
     spyhunter::runtime::PckArchive archive;
@@ -49,6 +50,7 @@ bool readArchive(const std::filesystem::path& path, const MissionLoadStage stage
         const auto& entry = archive.entries()[index];
         std::uint64_t offset = 0;
         while (offset < entry.size) {
+            if (stop.stop_requested()) { error = "Mission package inspection cancelled."; return false; }
             const auto amount = static_cast<std::size_t>((std::min)(
                 std::uint64_t(buffer.size()), entry.size - offset));
             const auto received = archive.readEntry(index, offset, buffer.data(), amount, error);
@@ -59,14 +61,19 @@ bool readArchive(const std::filesystem::path& path, const MissionLoadStage stage
             }
             offset += received;
             completed += received;
-            if (progress) progress({stage, entry.loadName, completed, total});
+            if (progress && !progress({stage, entry.loadName, completed, total})) {
+                error = "Mission package inspection cancelled.";
+                return false;
+            }
         }
     }
     return true;
 }
 
 bool readCompanion(const std::filesystem::path& path,
-                   const std::function<void(const MissionLoadProgress&)>& progress,
+                   const MissionLoadStage stage,
+                   std::stop_token stop,
+                   const std::function<bool(const MissionLoadProgress&)>& progress,
                    std::string& error)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -84,6 +91,7 @@ bool readCompanion(const std::filesystem::path& path,
     std::array<char, readChunkBytes> buffer{};
     std::uint64_t completed = 0;
     while (completed < total) {
+        if (stop.stop_requested()) { error = "Mission package inspection cancelled."; return false; }
         const auto amount = static_cast<std::streamsize>((std::min)(
             std::uint64_t(buffer.size()), total - completed));
         if (!file.read(buffer.data(), amount)) {
@@ -91,17 +99,22 @@ bool readCompanion(const std::filesystem::path& path,
             return false;
         }
         completed += static_cast<std::uint64_t>(amount);
-        if (progress) progress({MissionLoadStage::companionFile, path.filename().string(), completed, total});
+        if (progress && !progress({stage, path.filename().string(), completed, total})) {
+            error = "Mission package inspection cancelled.";
+            return false;
+        }
     }
     return true;
 }
 }
 
 bool inspectProvingGroundsPackage(const std::filesystem::path& extractedRoot,
-                                 const std::function<void(const MissionLoadProgress&)>& progress,
+                                 const std::stop_token stop,
+                                 const std::function<bool(const MissionLoadProgress&)>& progress,
                                  std::string& error)
 {
     error.clear();
+    if (stop.stop_requested()) { error = "Mission package inspection cancelled."; return false; }
     const auto missionRoot = extractedRoot / "PG1";
     const auto staticArchivePath = missionRoot / "PG1.PCK";
     const auto dynamicArchivePath = missionRoot / "PG1D.PCK";
@@ -121,6 +134,12 @@ bool inspectProvingGroundsPackage(const std::filesystem::path& extractedRoot,
         }
     }
 
+    // ShLevel::load reads the loose water file between the static and dynamic
+    // archives. ShLevel::init then reads AI, object definitions and effect counts.
+    if (!readArchive(staticArchivePath, MissionLoadStage::staticArchive, stop, progress, error) ||
+        !readCompanion(missionRoot / L"PG1.WTR", MissionLoadStage::staticLevelData,
+                       stop, progress, error)) return false;
+
     spyhunter::runtime::PckArchive dynamicArchive;
     if (!dynamicArchive.open(dynamicArchivePath, error)) {
         error = dynamicArchivePath.string() + ": " + error;
@@ -136,15 +155,11 @@ bool inspectProvingGroundsPackage(const std::filesystem::path& extractedRoot,
             return false;
         }
     }
+    if (!readArchive(dynamicArchivePath, MissionLoadStage::dynamicArchive, stop, progress, error)) return false;
 
-    // Follow ShLoadLevelState's package order. Import/decoding remains a
-    // separate boundary; this pass performs bounded reads to verify the data.
-    if (!readArchive(staticArchivePath, MissionLoadStage::staticArchive, progress, error) ||
-        !readArchive(dynamicArchivePath, MissionLoadStage::dynamicArchive, progress, error)) return false;
-
-    for (const auto& companion : companions) {
+    for (const auto& companion : initializationCompanions) {
         const auto path = missionRoot / companion.path;
-        if (!readCompanion(path, progress, error)) return false;
+        if (!readCompanion(path, MissionLoadStage::levelInitializationData, stop, progress, error)) return false;
     }
     return true;
 }

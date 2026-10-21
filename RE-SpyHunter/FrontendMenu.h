@@ -2,14 +2,19 @@
 
 #include "../GameRuntime/CutscenePlayer.h"
 #include "../GameRuntime/PackedTexture.h"
+#include "../GameRuntime/StillTexture.h"
 #include "../GameRuntime/VkfTextureFont.h"
+#include "MissionLevelLoading.h"
 #include "../GameUI/MenuSelection.h"
 #include "../GameUI/MenuAxisRepeat.h"
 #include <array>
 #include <filesystem>
+#include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace spyhunter::game
@@ -20,7 +25,8 @@ public:
     static constexpr std::size_t profileCount = 3;
     enum class Screen { profileSelect, nameEntry, mainMenu, twoPlayer, systemOptions, dossier,
                         missionSelect, briefing, deleteProfile, settings, controller, extras,
-                        musicPlayer, moviePlayer, cheatGrid, controller1Options, controller2Options };
+                        musicPlayer, moviePlayer, cheatGrid, controller1Options, controller2Options,
+                        missionLoading };
 
     FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& root,
                  std::filesystem::path profilePath, std::filesystem::path backgroundPath);
@@ -58,6 +64,9 @@ private:
     void horizontal(int direction);
     void secondary();
     void appendNameCharacter(char character);
+    void startMissionLoad();
+    void cancelMissionLoad();
+    void drawMissionLoading() const;
     bool saveProfiles(std::string& error) const;
     void drawCentered(std::string_view text, float yFromBottom, float scale = 1.0f) const;
 
@@ -67,6 +76,7 @@ private:
     std::filesystem::path backgroundPath_;
     runtime::VkfTextureFont font_;
     runtime::VkfTextureFont profileFont_;
+    runtime::StillTexture missionLoadingBackground_;
     runtime::PackedTexture navIcon_;
     runtime::PackedTexture acceptIcon_;
     runtime::PackedTexture deleteIcon_;
@@ -101,5 +111,15 @@ private:
     std::size_t musicLayout_ = 0;
     ui::MenuAxisRepeat horizontalAxis_{0.95f, 0.6, 0.19};
     ui::MenuAxisRepeat verticalAxis_{0.95f, 0.6, 0.19};
+    mutable std::mutex missionLoadMutex_;
+    MissionLoadStage missionLoadStage_ = MissionLoadStage::staticArchive;
+    std::string missionLoadItem_;
+    std::string missionLoadError_;
+    std::uint64_t missionLoadCompletedBytes_ = 0;
+    std::uint64_t missionLoadTotalBytes_ = 0;
+    bool missionLoadFinished_ = false;
+    bool missionLoadSucceeded_ = false;
+    // Declared last so it is joined before the callback state above is destroyed.
+    std::jthread missionLoadWorker_;
 };
 }
