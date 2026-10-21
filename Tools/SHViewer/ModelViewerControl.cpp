@@ -19,6 +19,36 @@ namespace
 struct ProjectedVertex { SDL_FPoint point{}; float depth = 0.0f; SDL_Color color{}; };
 struct Triangle { std::array<ProjectedVertex, 3> vertices{}; float depth = 0.0f; };
 
+float detailsPanelWidth(const float viewportWidth, const bool diagnostics)
+{
+    const float preferredWidth = diagnostics ? 400.0f : 360.0f;
+    const float viewportFraction = diagnostics ? 0.48f : 0.42f;
+    return (std::min)(preferredWidth, viewportWidth * viewportFraction);
+}
+
+SDL_FRect sceneRect(const SDL_FRect& viewport, const bool diagnostics)
+{
+    const float panelWidth = detailsPanelWidth(viewport.w, diagnostics);
+    return {viewport.x + 16.0f, viewport.y + 42.0f,
+            viewport.w - panelWidth - 32.0f, viewport.h - 88.0f};
+}
+
+SDL_FRect detailsRect(const SDL_FRect& viewport, const bool diagnostics)
+{
+    const SDL_FRect scene = sceneRect(viewport, diagnostics);
+    return {scene.x + scene.w + 16.0f, scene.y,
+            detailsPanelWidth(viewport.w, diagnostics), scene.h};
+}
+
+SDL_Rect sceneClipRect(const SDL_FRect& scene)
+{
+    const int left = static_cast<int>(std::ceil(scene.x));
+    const int top = static_cast<int>(std::ceil(scene.y));
+    const int right = static_cast<int>(std::floor(scene.x + scene.w));
+    const int bottom = static_cast<int>(std::floor(scene.y + scene.h));
+    return {left, top, (std::max)(0, right - left), (std::max)(0, bottom - top)};
+}
+
 template<typename Vertex>
 SDL_FPoint project(const Vertex& source, const std::array<float, 3>& center,
                    const float scale, const SDL_FRect& viewport, const float yaw, const float elevation)
@@ -385,10 +415,7 @@ void ModelViewerControl::showUnsupportedResource(const std::filesystem::path& ar
 bool ModelViewerControl::handleEvent(const SDL_Event& event, const SDL_FRect& viewerViewport)
 {
     if (!active_) return false;
-    const float panelWidth = (std::min)(diagnostics_ ? 340.0f : 280.0f,
-                                        viewerViewport.w * (diagnostics_ ? 0.45f : 0.38f));
-    const SDL_FRect scene{viewerViewport.x + 16.0f, viewerViewport.y + 42.0f,
-                          viewerViewport.w - panelWidth - 32.0f, viewerViewport.h - 88.0f};
+    const SDL_FRect scene = sceneRect(viewerViewport, diagnostics_);
     const auto insideScene = [&](const float x, const float y) {
         return x >= scene.x && x < scene.x + scene.w && y >= scene.y && y < scene.y + scene.h;
     };
@@ -468,17 +495,30 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
 {
     if (!active_ || viewport.w <= 0 || viewport.h <= 0) return;
     spyhunter::gui::panel(renderer, viewport, {23, 27, 32, 255});
+    SDL_SetRenderDrawColor(renderer, 226, 233, 243, 255);
     spyhunter::gui::text(renderer, viewport.x + 16, viewport.y + 12, "3D RESOURCE INSPECTOR | HOST DIAGNOSTIC VIEW");
-    const float panelWidth = (std::min)(diagnostics_ ? 340.0f : 280.0f, viewport.w * (diagnostics_ ? 0.45f : 0.38f));
-    const SDL_FRect scene{viewport.x + 16, viewport.y + 42, viewport.w - panelWidth - 32, viewport.h - 88};
+    const SDL_FRect scene = sceneRect(viewport, diagnostics_);
+    const SDL_FRect details = detailsRect(viewport, diagnostics_);
     spyhunter::gui::panel(renderer, scene, {232, 235, 238, 255});
-    spyhunter::gui::panel(renderer, {scene.x + scene.w + 16, scene.y, panelWidth, scene.h}, {34, 40, 47, 255});
+    spyhunter::gui::panel(renderer, details, {27, 34, 44, 255});
+    SDL_SetRenderDrawColor(renderer, 229, 236, 246, 255);
     if (mesh_ || (model_ && !model_->drawables.empty())) {
         float y = scene.y + 16;
-        const auto line = [&](const std::string& value) { spyhunter::gui::text(renderer, scene.x + scene.w + 28, y, value); y += diagnostics_ ? 18.0f : 22.0f; };
+        const float textX = details.x + 14.0f;
+        const float textRight = details.x + details.w - 12.0f;
+        const auto line = [&](const std::string& value) {
+            const auto clipped = spyhunter::gui::shorten(value,
+                static_cast<std::size_t>((std::max)(12.0f, (textRight - textX) / 8.0f)));
+            SDL_SetRenderDrawColor(renderer, 229, 236, 246, 255);
+            spyhunter::gui::text(renderer, textX, y, clipped);
+            y += diagnostics_ ? 18.0f : 20.0f;
+        };
         if (mesh_) {
             const auto& mesh = *mesh_;
+            const SDL_Rect sceneClip = sceneClipRect(scene);
+            SDL_SetRenderClipRect(renderer, &sceneClip);
             renderTrack(renderer, mesh, scene, wireframe_, vertexColors_, bounds_, vertexPoints_, yaw_, elevation_, zoom_);
+            SDL_SetRenderClipRect(renderer, nullptr);
             line("Type: vkTrack v3.0.85");
             line("Internal BSP: " + std::to_string(mesh.bspVersion));
             line("Member: " + spyhunter::gui::shorten(mesh.memberName, 34));
@@ -497,8 +537,11 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("Depth uses painter approximation");
         } else {
             const auto& drawable = model_->drawables[selectedDrawable_];
+            const SDL_Rect sceneClip = sceneClipRect(scene);
+            SDL_SetRenderClipRect(renderer, &sceneClip);
             renderTrack(renderer, drawable, scene, wireframe_, false,
                         bounds_, vertexPoints_, yaw_, elevation_, zoom_);
+            SDL_SetRenderClipRect(renderer, nullptr);
             line("Type: vkModel v" + std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
                  std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff));
             line("Member: " + spyhunter::gui::shorten(model_->memberName, 34));
@@ -541,12 +584,15 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
         if (mesh_) drawGeometryDiagnostics(*mesh_);
         else drawGeometryDiagnostics(model_->drawables[selectedDrawable_]);
     } else {
+        const float textX = details.x + 14.0f;
+        SDL_SetRenderDrawColor(renderer, 38, 46, 58, 255);
         spyhunter::gui::text(renderer, scene.x + 20, scene.y + 28, "Resource identified; geometry is not available for preview.");
         spyhunter::gui::text(renderer, scene.x + 20, scene.y + 52, "Parser status and source range are shown at right.");
-        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 16, "PARSER STATUS");
-        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 42, spyhunter::gui::shorten(status_, 36));
-        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 76, spyhunter::gui::shorten(resourceSummary_, 36));
-        spyhunter::gui::text(renderer, scene.x + scene.w + 28, scene.y + 108, "Source member remains read-only.");
+        SDL_SetRenderDrawColor(renderer, 229, 236, 246, 255);
+        spyhunter::gui::text(renderer, textX, scene.y + 16, "PARSER STATUS");
+        spyhunter::gui::text(renderer, textX, scene.y + 42, spyhunter::gui::shorten(status_, 42));
+        spyhunter::gui::text(renderer, textX, scene.y + 76, spyhunter::gui::shorten(resourceSummary_, 42));
+        spyhunter::gui::text(renderer, textX, scene.y + 108, "Source member remains read-only.");
     }
 }
 }
