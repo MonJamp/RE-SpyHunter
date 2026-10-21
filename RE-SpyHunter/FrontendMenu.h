@@ -28,7 +28,7 @@ public:
     enum class Screen { profileSelect, nameEntry, mainMenu, twoPlayer, systemOptions, dossier,
                         missionSelect, briefing, deleteProfile, settings, controller, extras,
                         musicPlayer, moviePlayer, cheatGrid, controller1Options, controller2Options,
-                        missionLoading };
+                        missionLoading, levelPreview };
 
     FrontendMenu(SDL_Renderer* renderer, const std::filesystem::path& root,
                  std::filesystem::path profilePath, std::filesystem::path backgroundPath);
@@ -77,6 +77,7 @@ private:
     void startMissionLoad();
     void cancelMissionLoad();
     void drawMissionLoading() const;
+    void drawMissionLevelPreview() const;
     bool saveProfiles(std::string& error) const;
     void drawCentered(std::string_view text, float yFromBottom, float scale = 1.0f) const;
 
@@ -147,6 +148,7 @@ private:
     std::uint64_t missionLoadTotalBytes_ = 0;
     bool missionLoadFinished_ = false;
     bool missionLoadSucceeded_ = false;
+    std::optional<runtime::TrackGeometryImport> missionTrack_;
     // Declared last so it is joined before the callback state above is destroyed.
     std::jthread missionLoadWorker_;
 };

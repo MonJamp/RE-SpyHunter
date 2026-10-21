@@ -99,7 +99,7 @@ bool parseEntry(std::ifstream& stream, const std::uint64_t offset, const std::ui
 }
 }
 
-bool PckArchive::open(const std::filesystem::path& path, std::string& error)
+bool PckArchive::open(const std::filesystem::path& path, std::string& error, const std::stop_token stop)
 {
     path_.clear(); sourceName_.clear(); entries_.clear(); error.clear();
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
@@ -121,6 +121,7 @@ bool PckArchive::open(const std::filesystem::path& path, std::string& error)
     std::size_t carry = 0;
     std::uint64_t position = static_cast<std::uint64_t>(first);
     while (position < fileSize) {
+        if (stop.stop_requested()) { error = "PCK indexing cancelled."; entries_.clear(); return false; }
         const auto amount = static_cast<std::size_t>((std::min)(std::uint64_t(blockSize), fileSize - position));
         stream.clear(); stream.seekg(static_cast<std::streamoff>(position));
         if (!stream.read(reinterpret_cast<char*>(block.data() + carry), amount)) {

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <stop_token>
 #include <vector>
 
 namespace spyhunter::runtime
@@ -22,7 +23,7 @@ struct PckEntry
 class PckArchive
 {
 public:
-    bool open(const std::filesystem::path& path, std::string& error);
+    bool open(const std::filesystem::path& path, std::string& error, std::stop_token stop = {});
     const std::vector<PckEntry>& entries() const { return entries_; }
     const std::string& sourceName() const { return sourceName_; }
     // Reads at most capacity bytes from one serialized entry. Returns bytes read.

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -366,10 +367,12 @@ void FrontendMenu::update()
         case MissionLoadStage::staticLevelData: label = "READING WATER DATA"; break;
         case MissionLoadStage::dynamicArchive: label = "READING DYNAMIC ARCHIVE"; break;
         case MissionLoadStage::levelInitializationData: label = "READING LEVEL SETUP DATA"; break;
+        case MissionLoadStage::trackGeometry: label = "BUILDING TRACK GEOMETRY"; break;
         }
         status_ = missionLoadFinished_ ?
-            (missionLoadSucceeded_ ? "PACKAGE READ COMPLETE; 3D LEVEL DRAWING NOT IMPLEMENTED" : missionLoadError_) :
+            (missionLoadSucceeded_ ? "TRACK IMPORT COMPLETE; DIAGNOSTIC VIEW READY" : missionLoadError_) :
             (missionLoadItem_.empty() ? label : label + " - " + missionLoadItem_);
+        if (missionLoadFinished_ && missionLoadSucceeded_ && missionTrack_) screen_ = Screen::levelPreview;
         return;
     }
     const auto nowMs = SDL_GetTicks();
@@ -506,6 +509,8 @@ void FrontendMenu::accept()
         startMissionLoad();
     } else if (screen_ == Screen::missionLoading) {
         return;
+    } else if (screen_ == Screen::levelPreview) {
+        return;
     } else if (screen_ == Screen::twoPlayer) {
         status_ = "MISSION LOCKED - COMPLETE ALL MISSION OBJECTIVES";
     } else if (screen_ == Screen::settings) {
@@ -550,12 +555,13 @@ void FrontendMenu::startMissionLoad()
         missionLoadTotalBytes_ = 0;
         missionLoadFinished_ = false;
         missionLoadSucceeded_ = false;
+        missionTrack_.reset();
     }
     open(Screen::missionLoading);
     const auto extractedRoot = missionLoadRoot_.empty() ? root_ : missionLoadRoot_;
     missionLoadWorker_ = std::jthread([this, extractedRoot](const std::stop_token stop) {
         std::string error;
-        const bool loaded = inspectProvingGroundsPackage(extractedRoot, stop,
+        bool loaded = inspectProvingGroundsPackage(extractedRoot, stop,
             [this, stop](const MissionLoadProgress& progress) {
                 if (stop.stop_requested()) return false;
                 const auto capturePause = missionLoadCapturePause_;
@@ -569,7 +575,18 @@ void FrontendMenu::startMissionLoad()
                 if (capturePause.count() > 0) std::this_thread::sleep_for(capturePause);
                 return !stop.stop_requested();
             }, error);
+        runtime::TrackGeometryImport track;
+        if (loaded) {
+            {
+                std::lock_guard lock(missionLoadMutex_);
+                missionLoadStage_ = MissionLoadStage::trackGeometry;
+                missionLoadItem_ = "new_provinggrounds.trk / leaf 74 / batch 5";
+            }
+            loaded = runtime::importTrackBatch(extractedRoot / "PG1" / "PG1.PCK",
+                "new_provinggrounds.trk", 74, 5, stop, track, error);
+        }
         std::lock_guard lock(missionLoadMutex_);
+        if (loaded) missionTrack_ = std::move(track);
         missionLoadSucceeded_ = loaded;
         missionLoadError_ = std::move(error);
         missionLoadFinished_ = true;
@@ -666,6 +683,53 @@ void FrontendMenu::drawMissionLoading() const
         const auto percentText = "HOST READ " + std::to_string(percent) + "%";
         missionLoadingFont_.drawText(renderer_, percentText, 232.0f, 43.0f, canvasHeight, 1.0f, white);
     }
+}
+
+void FrontendMenu::drawMissionLevelPreview() const
+{
+    SDL_SetRenderDrawColor(renderer_, 4, 8, 13, 255);
+    SDL_RenderClear(renderer_);
+    if (!missionTrack_ || missionTrack_->selected.vertices.empty()) return;
+
+    const auto& mesh = missionTrack_->selected;
+    std::array<float, 2> minimum{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+    std::array<float, 2> maximum{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+    for (const auto& vertex : mesh.vertices) {
+        minimum[0] = (std::min)(minimum[0], vertex.position[0]);
+        minimum[1] = (std::min)(minimum[1], vertex.position[1]);
+        maximum[0] = (std::max)(maximum[0], vertex.position[0]);
+        maximum[1] = (std::max)(maximum[1], vertex.position[1]);
+    }
+    const float width = (std::max)(maximum[0] - minimum[0], 0.001f);
+    const float height = (std::max)(maximum[1] - minimum[1], 0.001f);
+    const float scale = (std::min)(576.0f / width, 320.0f / height);
+    const float left = (canvasWidth - width * scale) * 0.5f;
+    const float top = (canvasHeight - height * scale) * 0.5f;
+
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(mesh.triangles.size() * 3);
+    indices.reserve(mesh.triangles.size() * 3);
+    for (const auto& triangle : mesh.triangles) {
+        for (const auto sourceIndex : triangle.vertices) {
+            const auto& source = mesh.vertices[sourceIndex];
+            SDL_Vertex vertex{};
+            vertex.position = {left + (source.position[0] - minimum[0]) * scale,
+                               top + (maximum[1] - source.position[1]) * scale};
+            vertex.color = {
+                static_cast<float>((std::min)(255, int(source.color[0]) * 2)) / 255.0f,
+                static_cast<float>((std::min)(255, int(source.color[1]) * 2)) / 255.0f,
+                static_cast<float>((std::min)(255, int(source.color[2]) * 2)) / 255.0f, 1.0f};
+            vertices.push_back(vertex);
+            indices.push_back(static_cast<int>(indices.size()));
+        }
+    }
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()),
+                       indices.data(), static_cast<int>(indices.size()));
+    constexpr SDL_Color labelColor{160, 189, 216, 255};
+    font_.drawText(renderer_, "MISSION 1 TRACK INSPECTION - LEAF 74 / BATCH 5", 18, 24, canvasHeight, 0.72f, labelColor);
+    font_.drawText(renderer_, "TOP-DOWN DIAGNOSTIC | DEPTH AND ORIGINAL MATERIAL NOT IMPLEMENTED",
+                   18, 8, canvasHeight, 0.58f, labelColor);
 }
 
 void FrontendMenu::configure(Screen destination, std::size_t selection)
@@ -818,6 +882,10 @@ void FrontendMenu::render() const
     const SDL_FRect viewport{0, 0, canvasWidth, canvasHeight};
     if (screen_ == Screen::missionLoading) {
         drawMissionLoading();
+        return;
+    }
+    if (screen_ == Screen::levelPreview) {
+        drawMissionLevelPreview();
         return;
     }
     if (backgroundLoaded_) background_.render(renderer_, viewport);
