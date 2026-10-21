@@ -43,6 +43,17 @@ the selected bounds with its fixed inspection camera. It accepts source-space
 geometry and vertex colors, not original material or camera emulation; SDL
 remains the window presenter.
 
+`VkModelGeometry.h` exposes a separate bounded reader for ordinary PCK
+`vkModel` members (currently serialization v3.0.59+). It reads the selected
+member in 64 KiB chunks under a 16 MiB cap and retains decoded
+`vkPS2TriStrips` positions, UVs, raw attribute flag bytes, strip lengths,
+object IDs, and source offsets under per-drawable/count and 64 MiB decoded
+limits. The initial candidate-stream scan is heuristic and only fixture-checked;
+hierarchy/reference transforms, attribute meanings, shaders and textures are
+not resolved. SH Viewer renders a neutral diagnostic preview. Do not reuse this
+as a general confirmed VK format reader until more versions/fixtures are
+validated.
+
 `RgbaImage.h` decodes serialized `vkDMATexture` `.rgba`/`.rgb` resources from
 bytes or a standalone file. It follows the original version-dependent reader
 for palettes and mip data, supporting PSMT4, PSMT8, PSMCT32 and RGB5A1

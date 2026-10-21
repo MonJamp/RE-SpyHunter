@@ -150,7 +150,7 @@ bool supported(const spyhunter::runtime::AudioMpkEntry& entry)
 int main(int argc, char* argv[])
 {
     std::string configArgument;
-    std::string openArgument, memberArgument, exportArgument, captureArgument, geometryDebugArgument;
+    std::string openArgument, memberArgument, exportArgument, captureArgument, geometryDebugArgument, vkGeometryDebugArgument;
     std::uint32_t trackLeaf = 74, trackBatch = 5;
     bool alphaPreview = false;
     CLI::App commandLine{"Browse and preview extracted SpyHunter game files."};
@@ -159,9 +159,13 @@ int main(int argc, char* argv[])
     auto* memberOption = commandLine.add_option("--member", memberArgument, "Open a named PCK member (full name or basename)")->needs(openOption);
     auto* exportOption = commandLine.add_option("--export-image", exportArgument, "Export the selected decoded still as a native-resolution BMP and exit")->needs(openOption);
     auto* captureOption = commandLine.add_option("--capture-view", captureArgument, "Save one viewer frame as a BMP and exit")->needs(openOption)->excludes(exportOption);
-    commandLine.add_option("--dump-geometry-json", geometryDebugArgument,
+    auto* geometryDumpOption = commandLine.add_option("--dump-geometry-json", geometryDebugArgument,
         "Write decoded 3D vertices, strip topology, and source offsets as JSON and exit")
         ->needs(openOption)->needs(memberOption)->excludes(exportOption)->excludes(captureOption);
+    auto* vkDumpOption = commandLine.add_option("--dump-vk-json", vkGeometryDebugArgument,
+        "Write decoded vkModel drawables, attributes, strip lengths, and source offsets as JSON and exit")
+        ->needs(openOption)->needs(memberOption)->excludes(exportOption)->excludes(captureOption);
+    geometryDumpOption->excludes(vkDumpOption);
     commandLine.add_option("--leaf", trackLeaf, "Select a PG1 track BSP leaf (default: 74)")->needs(openOption);
     commandLine.add_option("--batch", trackBatch, "Select a batch within the selected PG1 leaf (default: 5)")->needs(openOption);
     commandLine.add_flag("--alpha", alphaPreview, "Start in alpha-channel view (also applies to image export)")->needs(openOption);
@@ -207,7 +211,7 @@ int main(int argc, char* argv[])
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("SpyHunter - SH Viewer", spyhunter::gui::defaultWindowWidth,
                                      spyhunter::gui::defaultWindowHeight, SDL_WINDOW_RESIZABLE |
-                                     (exportArgument.empty() && captureArgument.empty() && geometryDebugArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
+                                     (exportArgument.empty() && captureArgument.empty() && geometryDebugArgument.empty() && vkGeometryDebugArgument.empty() ? 0 : SDL_WINDOW_HIDDEN), &window, &renderer) ||
         !spyhunter::gui::configureRenderer(renderer)) {
         SDL_Log("Window or renderer setup failed: %s", SDL_GetError());
         SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 1;
@@ -351,9 +355,27 @@ int main(int argc, char* argv[])
                 return;
             }
             if (entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk") {
-                const std::string reason = "Ordinary vkModel hierarchy/drawable parser is not implemented yet.";
-                modelViewer.showUnsupportedResource(file.path, entry, reason);
-                status = reason;
+                spyhunter::runtime::VkModelLoadOptions options;
+                std::string error;
+                if (modelViewer.openVkModel(file.path, entry, options, error)) {
+                    const auto* model = modelViewer.modelForDiagnostics();
+                    status = "3D model preview: " + entry.name + " (raw drawables; hierarchy/shaders not applied).";
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::debug,
+                        "decoded vkModel member=" + entry.name + " version=" +
+                        std::to_string((entry.serializationVersion >> 24) & 0xff) + "." +
+                        std::to_string((entry.serializationVersion >> 16) & 0xff) + "." +
+                        std::to_string(entry.serializationVersion & 0xffff) + " memberOffset=" +
+                        std::to_string(entry.offset) + " size=" + std::to_string(entry.size) +
+                        " drawables=" + std::to_string(model ? model->drawables.size() : 0) +
+                        " unsupportedDrawables=" + std::to_string(model ? model->unsupportedDrawableRecords : 0));
+                } else {
+                    const std::string reason = "vkModel parser rejected resource: " + error;
+                    modelViewer.showUnsupportedResource(file.path, entry, reason);
+                    status = reason;
+                    spyhunter::logging::write("SHViewer", spyhunter::logging::Level::warning,
+                        "vkModel parse rejected member=" + entry.name + " offset=" + std::to_string(entry.offset) +
+                        " size=" + std::to_string(entry.size) + " reason=" + error);
+                }
                 return;
             }
             if (!supported(entry)) {
@@ -513,6 +535,16 @@ int main(int argc, char* argv[])
             exitCode = 1;
         } else {
             SDL_Log("Exported geometry diagnostics: %s (%s)", geometryDebugArgument.c_str(), status.c_str());
+        }
+        running = false;
+    }
+    if (!vkGeometryDebugArgument.empty()) {
+        std::string error;
+        if (exitCode || !modelViewer.writeVkModelDebugJson(vkGeometryDebugArgument, error)) {
+            SDL_Log("vkModel geometry debug export failed: %s", exitCode ? status.c_str() : error.c_str());
+            exitCode = 1;
+        } else {
+            SDL_Log("Exported vkModel geometry diagnostics: %s (%s)", vkGeometryDebugArgument.c_str(), status.c_str());
         }
         running = false;
     }
