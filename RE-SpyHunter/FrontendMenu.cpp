@@ -63,6 +63,35 @@ constexpr float dossierObjectivesColumnStep = 340.0f;
 constexpr std::array<std::string_view, 4> soundModeLabels{"MONO", "STEREO", "SURROUND", "HEADPHONES"};
 constexpr std::array<std::string_view, 3> briefingLabels{"OBJECTIVES", "WEAPONS", "ENEMIES"};
 constexpr std::array<std::string_view, 2> deleteLabels{"YES", "NO"};
+// SLUS_200.56 ShMenu1::buildStatus, requirements SEL-04. The local profile
+// currently has no gameplay progress store, so these source-derived point
+// thresholds are evaluated against zero points and incomplete prerequisites.
+constexpr std::array<int, 14> missionPointThresholds{0, 4, 7, 11, 14, 18, 22, 27, 32, 39, 42, 48, 53, 57};
+constexpr int localMissionObjectivePoints = 0;
+constexpr bool localAllLevelsOverride = false;
+constexpr bool localPreviousPrimaryComplete = false;
+
+struct MissionAccess
+{
+    bool open = false;
+    bool insufficientPoints = false;
+    bool previousPrimaryIncomplete = false;
+};
+
+MissionAccess missionAccess(const std::size_t mission)
+{
+    if (mission >= missionPointThresholds.size()) return {};
+    const bool firstMission = mission == 0;
+    const bool insufficientPoints = !firstMission &&
+        localMissionObjectivePoints < missionPointThresholds[mission];
+    const bool previousPrimaryIncomplete = !firstMission && !localPreviousPrimaryComplete;
+    return {
+        localAllLevelsOverride || firstMission ||
+            (!insufficientPoints && !previousPrimaryIncomplete),
+        insufficientPoints,
+        previousPrimaryIncomplete
+    };
+}
 
 bool hasSecondController()
 {
@@ -312,9 +341,9 @@ void FrontendMenu::accept()
         return;
     }
     if (screen_ == Screen::missionSelect) {
-        // Local profiles have no gameplay progress yet: only mission 1 is open.
-        if (submenuSelection_.index() != 0) { status_ = "MISSION LOCKED"; return; }
-        mission_ = submenuSelection_.index();
+        const auto selectedMission = submenuSelection_.index();
+        if (!missionAccess(selectedMission).open) { status_ = "MISSION LOCKED"; return; }
+        mission_ = selectedMission;
         open(Screen::briefing);
     } else if (screen_ == Screen::briefing) {
         status_ = "START MISSION - GAMEPLAY NOT IMPLEMENTED";
@@ -408,6 +437,8 @@ void FrontendMenu::horizontal(int direction)
     } else if (screen_ == Screen::cheatGrid) {
         submenuSelection_.move(direction);
         status_.clear();
+    } else if (screen_ == Screen::missionSelect) {
+        // ShMenu1::left/right (0x0016FA30 / 0x0016FA38) are empty.
     } else if (isCarousel(screen_) || screen_ == Screen::controller1Options ||
                screen_ == Screen::controller2Options) {
         moveSelection(direction);
@@ -642,14 +673,30 @@ void FrontendMenu::render() const
             drawCentered(std::to_string(submenuSelection_.index() + 1) + " / " + std::to_string(menuItems_.size()),
                          310.0f, 0.8f);
             std::string_view detail;
-            if (screen_ == Screen::missionSelect || screen_ == Screen::twoPlayer)
-                detail = screen_ == Screen::missionSelect && submenuSelection_.index() == 0 ? "MISSION OPEN" : "MISSION LOCKED";
+            if (screen_ == Screen::missionSelect)
+                detail = missionAccess(submenuSelection_.index()).open ? "MISSION OPEN" : "MISSION LOCKED";
+            else if (screen_ == Screen::twoPlayer) detail = "MISSION LOCKED";
             else if (screen_ == Screen::musicPlayer) detail = catalogue::musicAssets[submenuSelection_.index()];
             else if (screen_ == Screen::moviePlayer)
                 detail = submenuSelection_.index() < 2 ? "AVAILABLE" : "LOCKED";
             else detail = catalogue::rewardRequirements[submenuSelection_.index()];
             drawCentered(detail, 170, 0.7f);
-            drawCentered("LEFT / RIGHT  SELECT", 110, 0.65f);
+            if (screen_ == Screen::missionSelect) {
+                const auto selectedMission = submenuSelection_.index();
+                const auto access = missionAccess(selectedMission);
+                if (access.insufficientPoints) {
+                    drawCentered("NOT ENOUGH OBJECTIVE POINTS", 139, 0.62f);
+                    drawCentered("TO ACCESS LEVEL.", 123, 0.62f);
+                }
+                if (access.previousPrimaryIncomplete) {
+                    const float reasonTop = access.insufficientPoints ? 99.0f : 139.0f;
+                    drawCentered(catalogue::missions[selectedMission - 1], reasonTop, 0.58f);
+                    drawCentered("PRIMARY OBJECTIVE NOT", reasonTop - 16.0f, 0.58f);
+                    drawCentered("COMPLETE.", reasonTop - 32.0f, 0.58f);
+                }
+            } else {
+                drawCentered("LEFT / RIGHT  SELECT", 110, 0.65f);
+            }
             if (screen_ == Screen::musicPlayer) drawCentered("SQUARE / S  CHANGE LAYOUT", 85, 0.6f);
         }
         if (screen_ == Screen::cheatGrid) {
