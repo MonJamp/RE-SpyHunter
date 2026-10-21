@@ -31,23 +31,29 @@ void PackedTexture::unload()
     width_ = height_ = 0;
 }
 
-bool PackedTexture::load(const std::filesystem::path& archivePath, const std::string_view memberName,
-                         SDL_Renderer* renderer, std::string& error)
+std::optional<DecodedStill> loadPackedTexturePixels(const std::filesystem::path& archivePath,
+    const std::string_view memberName, std::string& error)
 {
-    unload();
     PckArchive archive;
-    if (!archive.open(archivePath, error)) return false;
+    if (!archive.open(archivePath, error)) return std::nullopt;
     const auto& entries = archive.entries();
     const auto found = std::find_if(entries.begin(), entries.end(), [&](const PckEntry& entry) {
         return entry.type == "vkDMATexture" && endsWithIgnoreCase(entry.name, memberName);
     });
-    if (found == entries.end()) { error = "Packed texture was not found in " + archivePath.string(); return false; }
-    if (found->size > 32ull * 1024 * 1024) { error = "Packed texture exceeds 32 MiB."; return false; }
+    if (found == entries.end()) { error = "Packed texture was not found in " + archivePath.string(); return std::nullopt; }
+    if (found->size > 32ull * 1024 * 1024) { error = "Packed texture exceeds 32 MiB."; return std::nullopt; }
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(found->size));
     if (archive.readEntry(static_cast<std::size_t>(found - entries.begin()), 0, bytes.data(), bytes.size(), error) != bytes.size())
-        return false;
+        return std::nullopt;
 
-    const auto decoded = decodeRgba(std::span<const std::uint8_t>(bytes), error);
+    return decodeRgba(std::span<const std::uint8_t>(bytes), error);
+}
+
+bool PackedTexture::load(const std::filesystem::path& archivePath, const std::string_view memberName,
+                         SDL_Renderer* renderer, std::string& error)
+{
+    unload();
+    const auto decoded = loadPackedTexturePixels(archivePath, memberName, error);
     if (!decoded) return false;
     const int width = decoded->width, height = decoded->height;
     texture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,

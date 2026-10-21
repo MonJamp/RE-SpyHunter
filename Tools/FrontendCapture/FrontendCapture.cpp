@@ -42,8 +42,8 @@ void configureParser(CLI::App& app, Options& options)
     app.add_option("--output", options.output, "Destination BMP path (directory must exist)")
         ->required();
     app.add_option("--background", options.background, "Optional prepared MBACK.mp4 background");
-    app.add_option("--screen", options.screen, "Screen to render: profile, name, or main")
-        ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main"}));
+    app.add_option("--screen", options.screen, "Screen to render: profile, name, main, or mission-select")
+        ->check(CLI::IsMember(std::vector<std::string>{"profile", "name", "main", "mission-select"}));
     app.add_option("--selection", options.selection, "Selected profile/menu index (default: 0)")
         ->check(CLI::Range(0, 23));
     app.add_option("--path", options.path, "Comma-separated menu indices to accept from the main menu")
@@ -68,12 +68,15 @@ bool validateOptions(Options& options, std::string& error)
     if (!options.path.empty() && options.screen != "main") {
         error = "--path requires --screen main."; return false;
     }
-    if (options.path.empty() && options.selection >= (options.screen == "main" ? 4 : 3)) {
+    const int maximumSelection = options.screen == "main" ? 4 :
+        options.screen == "mission-select" ? 14 : 3;
+    if (options.path.empty() && options.selection >= maximumSelection) {
         error = "--selection is out of range for the selected screen.";
         return false;
     }
-    if (options.screen == "name" && (options.selection != 0 || options.filled)) {
-        error = "The name screen does not support --selection or --filled.";
+    if ((options.screen == "name" && (options.selection != 0 || options.filled)) ||
+        (options.screen == "mission-select" && options.filled)) {
+        error = "The selected screen does not support the requested --selection or --filled options.";
         return false;
     }
     std::sort(options.completedPrimary.begin(), options.completedPrimary.end());
@@ -196,6 +199,16 @@ int main(const int argc, char** argv)
         const auto previous = menu.screen();
         key(menu, SDLK_RETURN);
         if (menu.screen() == previous) { std::cerr << "Menu path reaches a placeholder action.\n"; return 2; }
+    }
+    if (options.screen == "mission-select" && options.path.empty()) {
+        if (menu.screen() != spyhunter::game::FrontendMenu::Screen::mainMenu) {
+            if (!createProfile(menu)) { std::cerr << "Could not create capture profile.\n"; return 1; }
+        }
+        for (int index = 0; index < 4; ++index) key(menu, SDLK_DOWN);
+        key(menu, SDLK_RETURN);
+        if (menu.screen() != spyhunter::game::FrontendMenu::Screen::missionSelect) {
+            std::cerr << "Could not open Mission Select from the capture fixture.\n"; return 1;
+        }
     }
     if (options.screen != "name" && static_cast<std::size_t>(options.selection) >= menu.itemCount() &&
         !(menu.itemCount() == 0 && options.selection == 0)) {

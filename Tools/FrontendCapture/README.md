@@ -18,10 +18,11 @@ Options:
 
 - `--assets ROOT` and `--output FILE.bmp` are required. The output directory must already exist. Use `--help` for the generated option summary.
 - `--background MBACK.mp4` uses the prepared animated background. Omit it to inspect UI against the fallback background.
-- `--screen profile|name|main` selects the screen; the default is `profile`.
-- `--selection INDEX` moves the profile or main-menu cursor before rendering (0–2 for profile, 0–3 for main).
+- `--screen profile|name|main|mission-select` selects the screen; the default is `profile`.
+- `--selection INDEX` moves the profile or menu cursor before rendering (0–2 for profile, 0–3 for main, 0–13 for Mission Select).
 - With `--path`, `--selection` is checked against the destination (up to 23 for movies); briefing/grid choices use horizontal movement. `--path 0,0` reaches briefing, `2,2,0` music, `2,2,1` movies, `2,2,2` rewards, and `3` the read-only Dossier. Submenu selection crops use the table area rather than root-only coordinates.
 - `--path 2,1,0` accepts zero-based choices from the main menu before applying `--selection`; this example reaches Controller 1 Options. Requires `--screen main`. Each index is checked against the current menu size; paths that do not transition screens (locked or unimplemented actions) fail.
+- `--screen mission-select` creates the isolated capture profile, opens Operations, and renders the selector directly. Use `--mission-points`, `--completed-primary`, or `--all-levels` to select card states without persisting progress.
 - Mission Select progress fixtures can be set with `--mission-points N`, `--completed-primary 1,3`, and `--all-levels`. These values are temporary capture inputs and do not write profile progress. Example: `--screen main --path 0 --selection 1 --mission-points 4 --completed-primary 1` renders mission 2 open; omit `--completed-primary 1` to show only its unmet predecessor condition.
 - Mission Select cards settle to the initial targets before `--selection` is applied, so a nonzero selection captures the source-style scroll toward that mission. `--time-ms` controls the post-selection animation/background sample; use at least 700 ms for settled card positions, including the incoming card whose target is y=360.
 - `--filled` creates a temporary `SPY1` profile so the profile menu shows its progress row and Delete legend. The main-menu screen creates this profile automatically.

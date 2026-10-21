@@ -5,9 +5,14 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "VkiImage.h"
 
 namespace spyhunter::runtime
 {
+// Bounded packed-member decode for consumers that need pixels (for example masks).
+std::optional<DecodedStill> loadPackedTexturePixels(const std::filesystem::path& archivePath,
+    std::string_view memberName, std::string& error);
+
 class PackedTexture
 {
 public:

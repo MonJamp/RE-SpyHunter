@@ -5,6 +5,7 @@
 #include "../GameRuntime/VkfTextureFont.h"
 #include "../GameUI/MenuSelection.h"
 #include "../GameUI/MenuAxisRepeat.h"
+#include "../GameUI/AlphaClipMask.h"
 #include <array>
 #include <filesystem>
 #include <optional>
@@ -95,6 +96,7 @@ private:
     runtime::PackedTexture missionOverlay2_;
     runtime::PackedTexture missionOverlay3_;
     runtime::PackedTexture rendezvousLine_;
+    ui::AlphaClipMask missionMask_;
     runtime::CutsceneSession background_;
     bool backgroundLoaded_ = false;
     std::array<std::string, profileCount> profiles_{};

@@ -193,6 +193,35 @@ bool FrontendMenu::load(std::string& error, const bool debugProfile,
     if (!profileFont_.loadFromPackedArchive(root_ / "DATA" / "MENU.PCK", "euroStile12.vkf", renderer_, error))
         return false;
     const auto menuUiArchive = root_ / "DATA" / "MENU.PCK";
+    const auto stencil = runtime::loadPackedTexturePixels(menuUiArchive, "menu_stencil1.rgba", error);
+    if (!stencil) return false;
+    if (stencil->width != 128 || stencil->height != 512) {
+        error = "Mission Select stencil must be 128 x 512 for the USA layout.";
+        return false;
+    }
+    // ShMenu::buildNewMenuSprites places the 128x512 side texture at x=0 and a
+    // horizontally mirrored copy at x=512. Alpha-only writes combine with the
+    // transparent top/bottom clear sprites at (57,1,135,90) and (57,359,135,90).
+    // This binary host mask approximates the GS destination-alpha test; it is
+    // distinct from the 70%-alpha black panel drawn through it below.
+    std::vector<std::uint8_t> visible(640 * 448, 0);
+    for (int y = 0; y < 448; ++y) {
+        for (int x = 0; x < 640; ++x) {
+            bool value = false;
+            if (y >= 91 && y < 360) {
+                const int stencilX = x < 128 ? x : x >= 512 ? 639 - x : -1;
+                value = stencilX < 0 || stencil->rgba[(static_cast<std::size_t>(y) * 128 + stencilX) * 4 + 3] == 255;
+            }
+            // Untextured alpha-zero clear quads are submitted after the sides.
+            if ((x >= 57 && x < 192 && y >= 1 && y < 91) ||
+                (x >= 57 && x < 192 && y >= 359 && y < 449)) value = false;
+            visible[static_cast<std::size_t>(y) * 640 + x] = value ? 1 : 0;
+        }
+    }
+    if (!missionMask_.assign(640, 448, visible)) {
+        error = "Unable to construct Mission Select visibility mask.";
+        return false;
+    }
     for (std::size_t index = 0; index < missionScenes_.size(); ++index) {
         for (std::size_t frame = 0; frame < missionScenes_[index].size(); ++frame) {
             const auto member = std::string(missionScenePrefixes[index]) + "scene" +
@@ -606,7 +635,9 @@ void FrontendMenu::render() const
         constexpr auto red = sourceColor(0x3ec6a7f0, 0x3e851eb8, 0, 0x3f666666);
         const SDL_Color white{255, 255, 255, 255};
         const SDL_Color gray{170, 176, 192, 255};
-        ui::drawFilledPanel(renderer_, {0, 91, canvasWidth, 269}, {0, 0, 0, 178});
+        missionMask_.draw(renderer_, {0, 91, 640, 269}, [&] {
+            ui::drawFilledPanel(renderer_, {0, 91, canvasWidth, 269}, {0, 0, 0, 178});
+        });
         menuHighlightbar_.draw(renderer_, 0, 87, canvasWidth, 8);
         menuHighlightbar_.draw(renderer_, 0, 354, canvasWidth, 8);
         profileFont_.drawText(renderer_, "AGENT", 10, 421, canvasHeight, 0.8f, SDL_Color{50,54,105,255});
@@ -616,8 +647,6 @@ void FrontendMenu::render() const
                               162, 408, canvasHeight, 0.8f, gray);
         font_.drawText(renderer_, "MISSION SELECT", 420, 415, canvasHeight, 1.0f, lightBlue);
 
-        const SDL_Rect clip{57, 90, 526, 269};
-        SDL_SetRenderClipRect(renderer_, &clip);
         constexpr std::array<int, 5> cardOffsets{-1, 0, 1, 2, 3};
         for (std::size_t slot = 0; slot < cardOffsets.size(); ++slot) {
             const auto mission = static_cast<std::size_t>((static_cast<int>(selected) + cardOffsets[slot] +
@@ -626,19 +655,24 @@ void FrontendMenu::render() const
             const SDL_FRect card{static_cast<float>(position.x), static_cast<float>(position.y), 128, 64};
             const auto frameSlot = missionSceneSlots_[mission];
             const auto textureFrame = frameSlot < 3 ? frameSlot : frameSlot - 3;
-            missionScenes_[mission][textureFrame].draw(renderer_, card.x, card.y, card.w, card.h);
-            if (missionPointThresholds[mission] > 0) {
-                const auto badge = static_cast<std::size_t>(std::find(missionPointThresholds.begin()+1,
-                    missionPointThresholds.end(), missionPointThresholds[mission]) - missionPointThresholds.begin() - 1);
-                const auto* overlay = (slot % 3 == 0 ? &missionOverlay4_ : slot % 3 == 1 ? &missionOverlay2_ : &missionOverlay3_);
-                overlay->draw(renderer_, card.x, card.y, 128, 64);
-                if (badge < missionAccessLabels_.size())
-                    missionAccessLabels_[badge].draw(renderer_, card.x, card.y, 128, 64);
-            } else {
-                missionBlue_.draw(renderer_, card.x, card.y, 128, 64);
-            }
+            const SDL_Rect cardBounds{position.x, position.y, 128, 64};
+            const SDL_Rect selectorBounds{57, 90, 526, 269};
+            SDL_Rect cardClip{};
+            if (!SDL_GetRectIntersection(&cardBounds, &selectorBounds, &cardClip)) continue;
+            missionMask_.draw(renderer_, cardClip, [&] {
+                missionScenes_[mission][textureFrame].draw(renderer_, card.x, card.y, card.w, card.h);
+                if (missionPointThresholds[mission] > 0) {
+                    const auto badge = static_cast<std::size_t>(std::find(missionPointThresholds.begin()+1,
+                        missionPointThresholds.end(), missionPointThresholds[mission]) - missionPointThresholds.begin() - 1);
+                    const auto* overlay = (slot % 3 == 0 ? &missionOverlay4_ : slot % 3 == 1 ? &missionOverlay2_ : &missionOverlay3_);
+                    overlay->draw(renderer_, card.x, card.y, 128, 64);
+                    if (badge < missionAccessLabels_.size())
+                        missionAccessLabels_[badge].draw(renderer_, card.x, card.y, 128, 64);
+                } else {
+                    missionBlue_.draw(renderer_, card.x, card.y, 128, 64);
+                }
+            });
         }
-        SDL_SetRenderClipRect(renderer_, nullptr);
         menuLightbar_.drawTinted(renderer_, {245, 101, 160, 27}, lightBlue);
         profileFont_.drawText(renderer_, "MISSION", 273, 335, canvasHeight, 0.8f, white);
         char missionNumber[3]{};
