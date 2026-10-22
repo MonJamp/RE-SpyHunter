@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../GameRuntime/PckArchive.h"
+#include "../../GameRuntime/PackedTexture.h"
 #include "../../GameRuntime/TrackGeometry.h"
 #include "../../GameRuntime/VkModelGeometry.h"
 
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace spyhunter::tools
 {
@@ -21,7 +23,9 @@ public:
     bool openTrack(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
                    const runtime::TrackLoadOptions& options, std::string& error);
     bool openVkModel(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
-                     const runtime::VkModelLoadOptions& options, std::string& error);
+                     const runtime::VkModelLoadOptions& options, SDL_Renderer* renderer,
+                     const std::filesystem::path& textureArchivePath, std::string_view textureMember,
+                     std::string& error);
     void showUnsupportedResource(const std::filesystem::path& archivePath,
                                  const runtime::PckEntry& entry, const std::string& reason);
     bool writeGeometryDebugJson(const std::filesystem::path& outputPath, std::string& error) const;
@@ -38,6 +42,8 @@ private:
     bool active_ = false;
     std::optional<runtime::TrackMesh> mesh_;
     std::optional<runtime::VkModelGeometry> model_;
+    runtime::PackedTexture modelTexture_;
+    std::string textureDescription_;
     std::size_t selectedDrawable_ = 0;
     std::string status_;
     std::string resourceSummary_;
@@ -52,5 +58,8 @@ private:
     bool diagnostics_ = false;
     bool bounds_ = false;
     bool vertexPoints_ = false;
+    bool textured_ = true;
+    bool repeatUv_ = true;
+    bool flipTextureV_ = true;
 };
 }

@@ -16,7 +16,7 @@ namespace spyhunter::tools
 {
 namespace
 {
-struct ProjectedVertex { SDL_FPoint point{}; float depth = 0.0f; SDL_Color color{}; };
+struct ProjectedVertex { SDL_FPoint point{}; SDL_FPoint uv{}; float depth = 0.0f; SDL_Color color{}; };
 struct Triangle { std::array<ProjectedVertex, 3> vertices{}; float depth = 0.0f; };
 
 float detailsPanelWidth(const float viewportWidth, const bool diagnostics)
@@ -70,7 +70,9 @@ SDL_FPoint project(const Vertex& source, const std::array<float, 3>& center,
 template<typename Mesh>
 void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& viewport,
                  const bool wireframe, const bool vertexColors, const bool showBounds,
-                 const bool showVertices, const float yaw, const float elevation, const float zoom)
+                 const bool showVertices, const float yaw, const float elevation, const float zoom,
+                 SDL_Texture* texture = nullptr, const bool repeatUv = false, const bool flipV = false,
+                 const bool sortByCameraDepth = false)
 {
     if (mesh.vertices.empty() || viewport.w <= 0 || viewport.h <= 0) return;
     std::array<float, 3> minimum = mesh.vertices.front().position;
@@ -92,9 +94,17 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
             const auto& source = mesh.vertices[indices[corner]];
             auto& output = triangle.vertices[corner];
             output.point = project(source, center, scale, viewport, yaw, elevation);
-            output.depth = source.position[0] + source.position[1] + source.position[2];
+            output.uv = {source.uv[0], source.uv[1]};
+            if (sortByCameraDepth) {
+                const float sourceX = source.position[0] - center[0];
+                const float sourceY = source.position[1] - center[1];
+                const float sourceZ = source.position[2] - center[2];
+                const float azimuth = yaw + 0.78539816f;
+                output.depth = (sourceX * std::sin(azimuth) + sourceY * std::cos(azimuth)) * std::sin(elevation) +
+                               sourceZ * std::cos(elevation);
+            } else output.depth = source.position[0] + source.position[1] + source.position[2];
             triangle.depth += output.depth;
-            output.color = vertexColors
+            output.color = texture ? SDL_Color{255, 255, 255, 255} : vertexColors
                 ? SDL_Color{source.color[0], source.color[1], source.color[2], 255}
                 : SDL_Color{172, 185, 198, 255};
         }
@@ -110,10 +120,15 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
         indices.reserve(triangles.size() * 3);
         for (const auto& triangle : triangles) for (const auto& vertex : triangle.vertices) {
             indices.push_back(static_cast<int>(vertices.size()));
+            const float sourceV = flipV ? 1.0f - vertex.uv.y : vertex.uv.y;
+            const SDL_FPoint mappedUv = repeatUv
+                ? SDL_FPoint{vertex.uv.x - std::floor(vertex.uv.x), sourceV - std::floor(sourceV)}
+                : SDL_FPoint{std::clamp(vertex.uv.x, 0.0f, 1.0f), std::clamp(sourceV, 0.0f, 1.0f)};
             vertices.push_back({vertex.point,
-                {vertex.color.r / 255.0f, vertex.color.g / 255.0f, vertex.color.b / 255.0f, vertex.color.a / 255.0f}, {}});
+                {vertex.color.r / 255.0f, vertex.color.g / 255.0f, vertex.color.b / 255.0f, vertex.color.a / 255.0f},
+                texture ? mappedUv : SDL_FPoint{}});
         }
-        SDL_RenderGeometry(renderer, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+        SDL_RenderGeometry(renderer, texture, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
     }
     if (wireframe) {
         SDL_SetRenderDrawColor(renderer, 40, 44, 50, 255);
@@ -238,6 +253,8 @@ void ModelViewerControl::clear()
     active_ = false;
     mesh_.reset();
     model_.reset();
+    modelTexture_.unload();
+    textureDescription_.clear();
     selectedDrawable_ = 0;
     status_.clear();
     resourceSummary_.clear();
@@ -246,6 +263,9 @@ void ModelViewerControl::clear()
     zoom_ = 1.0f;
     dragging_ = false;
     wireframe_ = vertexColors_ = false;
+    textured_ = true;
+    repeatUv_ = true;
+    flipTextureV_ = true;
     diagnostics_ = bounds_ = vertexPoints_ = false;
 }
 
@@ -262,14 +282,25 @@ bool ModelViewerControl::openTrack(const std::filesystem::path& archivePath, con
 }
 
 bool ModelViewerControl::openVkModel(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
-                                     const runtime::VkModelLoadOptions& options, std::string& error)
+                                     const runtime::VkModelLoadOptions& options, SDL_Renderer* renderer,
+                                     const std::filesystem::path& textureArchivePath, const std::string_view textureMember,
+                                     std::string& error)
 {
     clear();
     runtime::VkModelGeometry model;
     if (!runtime::loadVkModelGeometry(archivePath, entry, options, model, error)) return false;
     model_ = std::move(model);
+    if (!textureArchivePath.empty() && !textureMember.empty() && renderer) {
+        std::string textureError;
+        if (modelTexture_.load(textureArchivePath, textureMember, renderer, textureError))
+            textureDescription_ = std::string(textureMember) + " from " + textureArchivePath.filename().string();
+        else textureDescription_ = "Texture unresolved: " + textureError;
+    } else textureDescription_ = "No evidence-backed texture binding supplied.";
+    SDL_Log("SHViewer vkModel texture: model=%s source=%s dimensions=%dx%d status=%s",
+        entry.name.c_str(), textureDescription_.c_str(), modelTexture_.width(), modelTexture_.height(),
+        modelTexture_.nativeTexture() ? "loaded" : "unavailable");
     active_ = true;
-    status_ = "Raw vkPS2TriStrips geometry loaded; model hierarchy transforms and shaders are not applied.";
+    status_ = "Raw geometry with evidence-backed vehicle atlas; hierarchy and material state remain unresolved.";
     return true;
 }
 
@@ -465,6 +496,18 @@ bool ModelViewerControl::handleEvent(const SDL_Event& event, const SDL_FRect& vi
         if (model_) return true; // The raw model attribute flag is not yet confirmed as color.
         vertexColors_ = !vertexColors_;
         return true;
+    case SDLK_T:
+        if (!model_) return false;
+        textured_ = !textured_;
+        return true;
+    case SDLK_R:
+        if (!model_) return false;
+        repeatUv_ = !repeatUv_;
+        return true;
+    case SDLK_U:
+        if (!model_) return false;
+        flipTextureV_ = !flipTextureV_;
+        return true;
     case SDLK_F3: diagnostics_ = !diagnostics_; return true;
     case SDLK_F4: bounds_ = !bounds_; return true;
     case SDLK_V: vertexPoints_ = !vertexPoints_; return true;
@@ -499,7 +542,9 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
     spyhunter::gui::text(renderer, viewport.x + 16, viewport.y + 12, "3D RESOURCE INSPECTOR | HOST DIAGNOSTIC VIEW");
     const SDL_FRect scene = sceneRect(viewport, diagnostics_);
     const SDL_FRect details = detailsRect(viewport, diagnostics_);
-    spyhunter::gui::panel(renderer, scene, {232, 235, 238, 255});
+    const SDL_Color sceneBackground = model_ && modelTexture_.nativeTexture()
+        ? SDL_Color{47, 53, 61, 255} : SDL_Color{232, 235, 238, 255};
+    spyhunter::gui::panel(renderer, scene, sceneBackground);
     spyhunter::gui::panel(renderer, details, {27, 34, 44, 255});
     SDL_SetRenderDrawColor(renderer, 229, 236, 246, 255);
     if (mesh_ || (model_ && !model_->drawables.empty())) {
@@ -539,8 +584,10 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             const auto& drawable = model_->drawables[selectedDrawable_];
             const SDL_Rect sceneClip = sceneClipRect(scene);
             SDL_SetRenderClipRect(renderer, &sceneClip);
+            const bool useTexture = textured_ && drawable.hasUv && modelTexture_.nativeTexture();
             renderTrack(renderer, drawable, scene, wireframe_, false,
-                        bounds_, vertexPoints_, yaw_, elevation_, zoom_);
+                        bounds_, vertexPoints_, yaw_, elevation_, zoom_, useTexture ? modelTexture_.nativeTexture() : nullptr,
+                        repeatUv_, flipTextureV_, true);
             SDL_SetRenderClipRect(renderer, nullptr);
             line("Type: vkModel v" + std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
                  std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff));
@@ -556,10 +603,18 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("Flags: 0x" + [&] { std::ostringstream out; out << std::hex << drawable.vertexFlags; return out.str(); }());
             line(std::string("Attributes: position") + (drawable.hasAttributeFlag2 ? ", flag 0x2 raw" : "") +
                  (drawable.hasAttributeFlag4 ? ", flag 0x4 raw" : "") + (drawable.hasUv ? ", UV" : ""));
+            line("Texture: " + textureDescription_);
+            line(std::string("Texture mapping: ") + (useTexture ? "enabled" : "not applied (UV/asset unavailable or off)") + " (T toggles)");
+            line("Host filter: linear; game sampler state unknown");
+            line(std::string("UV wrap override: ") + (repeatUv_ ? "repeat" : "clamp") + " (R toggles)");
+            line(std::string("Texture V override: ") + (flipTextureV_ ? "flipped" : "source") + " (U toggles)");
+            line("PS2 blend / cull / lighting state unresolved");
+            line("Texture alpha: diagnostic viewer background behind texels");
             line("Attribute flag meanings unresolved");
             line("Node transforms not applied");
-            line("Shader / texture unresolved");
+            line("Shader dependency path is shown above");
             line("W: wireframe | C: color flag unresolved");
+            line("T: toggle evidence-backed texture");
             line("[ / ]: select drawable");
         }
         line("Left-drag: orbit | wheel: zoom");

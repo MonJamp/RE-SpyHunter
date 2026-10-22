@@ -101,6 +101,23 @@ std::vector<GameFile> findGameFiles(const std::filesystem::path& root)
     return files;
 }
 
+std::optional<std::pair<std::filesystem::path, std::string>> findPackedTexture(
+    const std::vector<GameFile>& files, const std::string_view memberName)
+{
+    const auto wanted = lowercase(std::filesystem::path(memberName).filename().string());
+    for (const auto& file : files) {
+        if (file.extension != ".pck") continue;
+        spyhunter::runtime::PckArchive candidate;
+        std::string error;
+        if (!candidate.open(file.path, error)) continue;
+        for (const auto& entry : candidate.entries()) {
+            if (entry.type == "vkDMATexture" && lowercase(std::filesystem::path(entry.name).filename().string()) == wanted)
+                return std::pair{file.path, entry.name};
+        }
+    }
+    return std::nullopt;
+}
+
 using spyhunter::runtime::DecodedStill;
 using spyhunter::runtime::decodeVki;
 
@@ -357,9 +374,18 @@ int main(int argc, char* argv[])
             if (entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk") {
                 spyhunter::runtime::VkModelLoadOptions options;
                 std::string error;
-                if (modelViewer.openVkModel(file.path, entry, options, error)) {
+                std::optional<std::pair<std::filesystem::path, std::string>> tireAtlas;
+                // spy_wheel.vk serializes a vkDMATexture dependency named
+                // new_car_all.rgb. The retail PCK load-name index resolves it to
+                // vehicles/interceptor/new_car_all.rgb. ShMenu5::buildInterceptor
+                // also loads interceptor_all.rgb for the complete vehicle setup.
+                if (lowercase(std::filesystem::path(entry.name).filename().string()) == "spy_wheel.vk")
+                    tireAtlas = findPackedTexture(gameFiles, "new_car_all.rgb");
+                const std::filesystem::path textureArchive = tireAtlas ? tireAtlas->first : std::filesystem::path{};
+                const std::string textureMember = tireAtlas ? tireAtlas->second : std::string{};
+                if (modelViewer.openVkModel(file.path, entry, options, renderer, textureArchive, textureMember, error)) {
                     const auto* model = modelViewer.modelForDiagnostics();
-                    status = "3D model preview: " + entry.name + " (raw drawables; hierarchy/shaders not applied).";
+                    status = "3D model preview: " + entry.name + " (vehicle atlas applied when available; material state diagnostic).";
                     spyhunter::logging::write("SHViewer", spyhunter::logging::Level::debug,
                         "decoded vkModel member=" + entry.name + " version=" +
                         std::to_string((entry.serializationVersion >> 24) & 0xff) + "." +
@@ -799,6 +825,7 @@ int main(int argc, char* argv[])
 
     cutscene.stop();
     audioPlayer.stop();
+    modelViewer.clear(); // Destroy its SDL texture while the renderer is still alive.
     SDL_DestroyTexture(stillTexture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

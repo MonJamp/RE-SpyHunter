@@ -38,6 +38,7 @@ public:
                             const SDL_FRect& source, bool horizontal, bool vertical) const;
     int width() const { return width_; }
     int height() const { return height_; }
+    SDL_Texture* nativeTexture() const { return texture_; }
 
 private:
     SDL_Texture* texture_ = nullptr;

@@ -49,10 +49,13 @@ member in 64 KiB chunks under a 16 MiB cap and retains decoded
 `vkPS2TriStrips` positions, UVs, raw attribute flag bytes, strip lengths,
 object IDs, and source offsets under per-drawable/count and 64 MiB decoded
 limits. The initial candidate-stream scan is heuristic and only fixture-checked;
-hierarchy/reference transforms, attribute meanings, shaders and textures are
-not resolved. SH Viewer renders a neutral diagnostic preview. Do not reuse this
-as a general confirmed VK format reader until more versions/fixtures are
-validated.
+hierarchy/reference transforms and attribute meanings are not generally
+resolved. For the `spy_wheel.vk` fixture, the model contains a serialized
+`vkPS2Shader`/`vkDMATexture` dependency naming `new_car_all.rgb`; SH Viewer
+binds the matching extracted PG1.PCK member and maps the retained float UVs.
+This is a viewer-side, source-backed dependency choice, not general
+shader/reference traversal. Do not reuse this as a general confirmed VK format
+reader until more versions/fixtures are validated.
 
 `RgbaImage.h` decodes serialized `vkDMATexture` `.rgba`/`.rgb` resources from
 bytes or a standalone file. It follows the original version-dependent reader
