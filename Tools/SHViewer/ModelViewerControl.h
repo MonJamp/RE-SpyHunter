@@ -26,13 +26,14 @@ public:
                    const runtime::TrackLoadOptions& options, std::string& error);
     bool openVkModel(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
                      const runtime::VkModelLoadOptions& options, SDL_Renderer* renderer,
-                     const std::filesystem::path& textureArchivePath, std::string_view textureMember,
+                     const std::vector<std::filesystem::path>& textureArchives,
                      std::string& error);
     void showUnsupportedResource(const std::filesystem::path& archivePath,
                                  const runtime::PckEntry& entry, const std::string& reason);
     bool writeGeometryDebugJson(const std::filesystem::path& outputPath, std::string& error) const;
     bool writeVkModelDebugJson(const std::filesystem::path& outputPath, std::string& error) const;
     bool active() const { return active_; }
+    void setRawAttributeColor(bool enabled) { rawAttributeColor_ = enabled; }
     bool hasGeometry() const { return mesh_.has_value() || (model_ && !model_->drawables.empty()); }
     const runtime::TrackMesh* meshForDiagnostics() const { return mesh_ ? &*mesh_ : nullptr; }
     const runtime::VkModelGeometry* modelForDiagnostics() const { return model_ ? &*model_ : nullptr; }
@@ -45,6 +46,9 @@ private:
     std::optional<runtime::TrackMesh> mesh_;
     std::optional<runtime::VkModelGeometry> model_;
     runtime::DecodedStill modelTexturePixels_;
+    struct TextureCandidate { std::string reference; std::filesystem::path archivePath; std::string memberName; };
+    std::vector<TextureCandidate> textureCandidates_;
+    std::size_t selectedTexture_ = 0;
     mutable SDL_Texture* depthPreviewTexture_ = nullptr;
     mutable int depthPreviewWidth_ = 0;
     mutable int depthPreviewHeight_ = 0;
@@ -68,5 +72,6 @@ private:
     bool textured_ = true;
     bool repeatUv_ = true;
     bool flipTextureV_ = true;
+    bool rawAttributeColor_ = false;
 };
 }

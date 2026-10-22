@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -29,10 +30,19 @@ float edgeFunction(const DepthVertex& a, const DepthVertex& b, const float x, co
     return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
 }
 
+std::string lowercase(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
 template<typename Mesh>
 void rasterizeModel(const Mesh& mesh, const SDL_FRect& viewport, const float yaw, const float elevation,
                     const float zoom, const bool textured, const bool repeatUv, const bool flipV,
-                    const runtime::DecodedStill& texture, std::vector<std::uint8_t>& rgba,
+                    const runtime::DecodedStill& texture, const bool rawAttributeColor,
+                    std::vector<std::uint8_t>& rgba,
                     std::vector<float>& depth, DepthRasterStats& stats)
 {
     const int width = static_cast<int>(viewport.w), height = static_cast<int>(viewport.h);
@@ -83,10 +93,35 @@ void rasterizeModel(const Mesh& mesh, const SDL_FRect& viewport, const float yaw
                 float u=wa*a.u+wb*b.u+wc*c.u, v=wa*a.v+wb*b.v+wc*c.v;
                 if (repeatUv) { u-=std::floor(u); v-=std::floor(v); }
                 else { u=std::clamp(u,0.0f,1.0f); v=std::clamp(v,0.0f,1.0f); }
-                const int tx=(std::min)(texture.width-1,static_cast<int>(u*texture.width));
-                const int ty=(std::min)(texture.height-1,static_cast<int>(v*texture.height));
-                const auto ti=(static_cast<std::size_t>(ty)*texture.width+tx)*4;
-                std::copy_n(texture.rgba.data()+ti,4,color.data());
+                const float sampleX=u*texture.width-.5f, sampleY=v*texture.height-.5f;
+                const int rawX0=static_cast<int>(std::floor(sampleX)), rawY0=static_cast<int>(std::floor(sampleY));
+                const float fx=sampleX-rawX0, fy=sampleY-rawY0;
+                const auto coordinate=[repeatUv](const int value,const int extent) {
+                    if (!repeatUv) return std::clamp(value,0,extent-1);
+                    const int wrapped=value%extent;
+                    return wrapped<0 ? wrapped+extent : wrapped;
+                };
+                const int x0=coordinate(rawX0,texture.width), x1=coordinate(rawX0+1,texture.width);
+                const int y0=coordinate(rawY0,texture.height), y1=coordinate(rawY0+1,texture.height);
+                const std::size_t samples[]{
+                    (static_cast<std::size_t>(y0)*texture.width+x0)*4,
+                    (static_cast<std::size_t>(y0)*texture.width+x1)*4,
+                    (static_cast<std::size_t>(y1)*texture.width+x0)*4,
+                    (static_cast<std::size_t>(y1)*texture.width+x1)*4};
+                for (std::size_t channel=0;channel<4;++channel) {
+                    const float top=texture.rgba[samples[0]+channel]*(1-fx)+texture.rgba[samples[1]+channel]*fx;
+                    const float bottom=texture.rgba[samples[2]+channel]*(1-fx)+texture.rgba[samples[3]+channel]*fx;
+                    color[channel]=static_cast<std::uint8_t>(std::clamp(top*(1-fy)+bottom*fy,0.0f,255.0f)+.5f);
+                }
+            }
+            if (rawAttributeColor && (mesh.hasAttributeFlag2 || mesh.hasAttributeFlag4)) {
+                const auto& colorA = mesh.hasAttributeFlag2 ? mesh.vertices[indices[0]].attributeFlag2 : mesh.vertices[indices[0]].attributeFlag4;
+                const auto& colorB = mesh.hasAttributeFlag2 ? mesh.vertices[indices[1]].attributeFlag2 : mesh.vertices[indices[1]].attributeFlag4;
+                const auto& colorC = mesh.hasAttributeFlag2 ? mesh.vertices[indices[2]].attributeFlag2 : mesh.vertices[indices[2]].attributeFlag4;
+                for (std::size_t channel=0; channel<3; ++channel) {
+                    const auto raw = static_cast<std::uint8_t>(std::clamp(wa*colorA[channel]+wb*colorB[channel]+wc*colorC[channel],0.0f,255.0f)+.5f);
+                    color[channel] = textured ? static_cast<std::uint8_t>((unsigned(color[channel])*raw+127)/255) : raw;
+                }
             }
             if (color[3]==0) continue;
             depth[pixel]=z;
@@ -337,6 +372,7 @@ void ModelViewerControl::clear()
     mesh_.reset();
     model_.reset();
     modelTexturePixels_ = {};
+    textureCandidates_.clear(); selectedTexture_ = 0;
     if (depthPreviewTexture_) SDL_DestroyTexture(depthPreviewTexture_);
     depthPreviewTexture_ = nullptr;
     depthPreviewWidth_ = depthPreviewHeight_ = 0;
@@ -353,6 +389,7 @@ void ModelViewerControl::clear()
     textured_ = true;
     repeatUv_ = true;
     flipTextureV_ = true;
+    rawAttributeColor_ = false;
     diagnostics_ = bounds_ = vertexPoints_ = false;
 }
 
@@ -370,26 +407,62 @@ bool ModelViewerControl::openTrack(const std::filesystem::path& archivePath, con
 
 bool ModelViewerControl::openVkModel(const std::filesystem::path& archivePath, const runtime::PckEntry& entry,
                                      const runtime::VkModelLoadOptions& options, SDL_Renderer* renderer,
-                                     const std::filesystem::path& textureArchivePath, const std::string_view textureMember,
+                                     const std::vector<std::filesystem::path>& textureArchives,
                                      std::string& error)
 {
     clear();
     runtime::VkModelGeometry model;
     if (!runtime::loadVkModelGeometry(archivePath, entry, options, model, error)) return false;
     model_ = std::move(model);
-    if (!textureArchivePath.empty() && !textureMember.empty() && renderer) {
+    if (renderer) {
+        std::vector<std::pair<std::filesystem::path, runtime::PckArchive>> archiveIndexes;
+        if (!model_->textureReferences.empty()) {
+            archiveIndexes.reserve(textureArchives.size());
+            for (const auto& textureArchive : textureArchives) {
+                runtime::PckArchive candidate;
+                std::string archiveError;
+                if (candidate.open(textureArchive, archiveError))
+                    archiveIndexes.emplace_back(textureArchive, std::move(candidate));
+            }
+        }
+        for (const auto& reference : model_->textureReferences) {
+            const auto wanted = lowercase(std::filesystem::path(reference).filename().string());
+            if (wanted.empty()) continue;
+            bool resolved = false;
+            for (const auto& [textureArchive, candidate] : archiveIndexes) {
+                const auto& entries = candidate.entries();
+                for (const auto& textureEntry : entries) {
+                    if (textureEntry.type != "vkDMATexture" ||
+                        lowercase(std::filesystem::path(textureEntry.name).filename().string()) != wanted) continue;
+                    if (std::none_of(textureCandidates_.begin(), textureCandidates_.end(), [&](const auto& prior) {
+                        return lowercase(prior.reference) == lowercase(reference);
+                    })) textureCandidates_.push_back({reference, textureArchive, textureEntry.name});
+                    resolved = true;
+                    break;
+                }
+                if (resolved) break;
+            }
+        }
+    }
+    if (!textureCandidates_.empty()) {
         std::string textureError;
-        auto pixels = runtime::loadPackedTexturePixels(textureArchivePath, textureMember, textureError);
+        auto pixels = runtime::loadPackedTexturePixels(textureCandidates_.front().archivePath,
+                                                       textureCandidates_.front().memberName, textureError);
         if (pixels) {
             modelTexturePixels_ = std::move(*pixels);
-            textureDescription_ = std::string(textureMember) + " from " + textureArchivePath.filename().string();
-        } else textureDescription_ = "Texture unresolved: " + textureError;
-    } else textureDescription_ = "No evidence-backed texture binding supplied.";
+            textureDescription_ = textureCandidates_.front().reference + " -> " +
+                textureCandidates_.front().memberName + " in " + textureCandidates_.front().archivePath.filename().string();
+        } else textureDescription_ = "Texture candidate failed to decode: " + textureError;
+    } else if (!model_->textureReferences.empty()) {
+        textureDescription_ = "Serialized texture paths found but no matching packed image resolved.";
+    } else {
+        textureDescription_ = "No packed RGB/RGBA paths found in the bounded model string scan.";
+    }
     SDL_Log("SHViewer vkModel texture: model=%s source=%s dimensions=%dx%d status=%s",
         entry.name.c_str(), textureDescription_.c_str(), modelTexturePixels_.width, modelTexturePixels_.height,
         modelTexturePixels_.rgba.empty() ? "unavailable" : "loaded for depth rasterizer");
     active_ = true;
-    status_ = "Raw geometry with evidence-backed vehicle atlas; hierarchy and material state remain unresolved.";
+    status_ = "Raw geometry with serialized texture references resolved when available; shader/material state remains unresolved.";
     return true;
 }
 
@@ -474,8 +547,11 @@ bool ModelViewerControl::writeVkModelDebugJson(const std::filesystem::path& outp
         << "  \"member_size\": " << model_->memberSize << ",\n"
         << "  \"model_version\": " << jsonString(std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
             std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff)) << ",\n"
-        << "  \"node_transforms_applied\": false,\n  \"shader_texture_resolved\": false,\n"
-        << "  \"unsupported_drawable_records\": " << model_->unsupportedDrawableRecords << ",\n"
+        << "  \"node_transforms_applied\": false,\n  \"shader_graph_traversed\": false,\n"
+        << "  \"texture_reference_scan_heuristic\": true,\n  \"texture_references\": [";
+    for (std::size_t i = 0; i < model_->textureReferences.size(); ++i)
+        output << (i ? ", " : "") << jsonString(model_->textureReferences[i]);
+    output << "],\n  \"unsupported_drawable_records\": " << model_->unsupportedDrawableRecords << ",\n"
         << "  \"drawables\": [\n";
     for (std::size_t d = 0; d < model_->drawables.size(); ++d) {
         const auto& drawable = model_->drawables[d];
@@ -583,8 +659,8 @@ bool ModelViewerControl::handleEvent(const SDL_Event& event, const SDL_FRect& vi
     switch (event.key.key) {
     case SDLK_W: wireframe_ = !wireframe_; return true;
     case SDLK_C:
-        if (model_) return true; // The raw model attribute flag is not yet confirmed as color.
-        vertexColors_ = !vertexColors_;
+        if (model_) rawAttributeColor_ = !rawAttributeColor_;
+        else vertexColors_ = !vertexColors_;
         return true;
     case SDLK_T:
         if (!model_) return false;
@@ -597,6 +673,22 @@ bool ModelViewerControl::handleEvent(const SDL_Event& event, const SDL_FRect& vi
     case SDLK_U:
         if (!model_) return false;
         flipTextureV_ = !flipTextureV_;
+        return true;
+    case SDLK_COMMA:
+    case SDLK_PERIOD:
+        if (!model_ || textureCandidates_.empty()) return false;
+        selectedTexture_ = event.key.key == SDLK_PERIOD
+            ? (selectedTexture_ + 1) % textureCandidates_.size()
+            : (selectedTexture_ + textureCandidates_.size() - 1) % textureCandidates_.size();
+        {
+            const auto& candidate = textureCandidates_[selectedTexture_];
+            std::string textureError;
+            auto pixels = runtime::loadPackedTexturePixels(candidate.archivePath, candidate.memberName, textureError);
+            modelTexturePixels_ = pixels ? std::move(*pixels) : runtime::DecodedStill{};
+            textureDescription_ = pixels
+                ? candidate.reference + " -> " + candidate.memberName + " in " + candidate.archivePath.filename().string()
+                : "Selected texture failed to decode: " + textureError;
+        }
         return true;
     case SDLK_F3: diagnostics_ = !diagnostics_; return true;
     case SDLK_F4: bounds_ = !bounds_; return true;
@@ -691,7 +783,8 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
                         depthPreviewPixels_[i*4+0] = sceneBackground.r; depthPreviewPixels_[i*4+1] = sceneBackground.g;
                         depthPreviewPixels_[i*4+2] = sceneBackground.b; depthPreviewPixels_[i*4+3] = 255;
                     }
-                    rasterizeModel(drawable, scene, yaw_, elevation_, zoom_, useTexture, repeatUv_, flipTextureV_, modelTexturePixels_, depthPreviewPixels_, depthBuffer_, depthStats);
+                    rasterizeModel(drawable, scene, yaw_, elevation_, zoom_, useTexture, repeatUv_, flipTextureV_,
+                                   modelTexturePixels_, rawAttributeColor_, depthPreviewPixels_, depthBuffer_, depthStats);
                     if (!depthPreviewTexture_ || depthPreviewWidth_ != imageWidth || depthPreviewHeight_ != imageHeight) {
                         if (depthPreviewTexture_) SDL_DestroyTexture(depthPreviewTexture_);
                         depthPreviewTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, imageWidth, imageHeight);
@@ -718,6 +811,8 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line(std::string("Attributes: position") + (drawable.hasAttributeFlag2 ? ", flag 0x2 raw" : "") +
                  (drawable.hasAttributeFlag4 ? ", flag 0x4 raw" : "") + (drawable.hasUv ? ", UV" : ""));
             line("Texture: " + textureDescription_);
+            if (!textureCandidates_.empty())
+                line("Texture choice: " + std::to_string(selectedTexture_ + 1) + " / " + std::to_string(textureCandidates_.size()) + " (, / . selects)");
             line(std::string("Texture mapping: ") + (useTexture ? "enabled" : "not applied (UV/asset unavailable or off)") + " (T toggles)");
             line("Host filter: linear; game sampler state unknown");
             line(std::string("UV wrap override: ") + (repeatUv_ ? "repeat" : "clamp") + " (R toggles)");
@@ -728,8 +823,9 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("Attribute flag meanings unresolved");
             line("Node transforms not applied");
             line("Shader dependency path is shown above");
-            line("W: wireframe | C: color flag unresolved");
-            line("T: toggle evidence-backed texture");
+            line(std::string("Raw vertex attribute colors: ") + (rawAttributeColor_ ? "on" : "off") + " (C toggles; meanings unknown)");
+            line("W: wireframe | C: raw attribute color diagnostic");
+            line("T: toggle texture | , / .: choose texture candidate");
             line("[ / ]: select drawable");
         }
         line("Left-drag: orbit | wheel: zoom");

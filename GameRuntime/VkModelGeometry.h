@@ -42,6 +42,9 @@ struct VkModelGeometry
     std::uint64_t memberOffset = 0;
     std::uint64_t memberSize = 0;
     std::uint32_t modelVersion = 0;
+    // Bounded printable resource paths ending in supported packed-texture
+    // extensions, heuristically discovered in the serialized vkModel member.
+    std::vector<std::string> textureReferences;
     std::vector<VkModelDrawable> drawables;
     std::uint32_t unsupportedDrawableRecords = 0;
 };

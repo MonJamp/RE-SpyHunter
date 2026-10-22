@@ -101,23 +101,6 @@ std::vector<GameFile> findGameFiles(const std::filesystem::path& root)
     return files;
 }
 
-std::optional<std::pair<std::filesystem::path, std::string>> findPackedTexture(
-    const std::vector<GameFile>& files, const std::string_view memberName)
-{
-    const auto wanted = lowercase(std::filesystem::path(memberName).filename().string());
-    for (const auto& file : files) {
-        if (file.extension != ".pck") continue;
-        spyhunter::runtime::PckArchive candidate;
-        std::string error;
-        if (!candidate.open(file.path, error)) continue;
-        for (const auto& entry : candidate.entries()) {
-            if (entry.type == "vkDMATexture" && lowercase(std::filesystem::path(entry.name).filename().string()) == wanted)
-                return std::pair{file.path, entry.name};
-        }
-    }
-    return std::nullopt;
-}
-
 using spyhunter::runtime::DecodedStill;
 using spyhunter::runtime::decodeVki;
 
@@ -169,7 +152,7 @@ int main(int argc, char* argv[])
     std::string configArgument;
     std::string openArgument, memberArgument, exportArgument, captureArgument, geometryDebugArgument, vkGeometryDebugArgument;
     std::uint32_t trackLeaf = 74, trackBatch = 5;
-    bool alphaPreview = false;
+    bool alphaPreview = false, rawAttributeColors = false;
     CLI::App commandLine{"Browse and preview extracted SpyHunter game files."};
     commandLine.add_option("config", configArgument, "Optional SpyHunter.config path");
     auto* openOption = commandLine.add_option("--open", openArgument, "Open a file relative to the configured game directory");
@@ -186,6 +169,9 @@ int main(int argc, char* argv[])
     commandLine.add_option("--leaf", trackLeaf, "Select a PG1 track BSP leaf (default: 74)")->needs(openOption);
     commandLine.add_option("--batch", trackBatch, "Select a batch within the selected PG1 leaf (default: 5)")->needs(openOption);
     commandLine.add_flag("--alpha", alphaPreview, "Start in alpha-channel view (also applies to image export)")->needs(openOption);
+    auto* rawAttributeOption = commandLine.add_flag("--raw-attribute-colors", rawAttributeColors,
+        "Color model vertices from uninterpreted attribute bytes (diagnostic only)");
+    rawAttributeOption->needs(openOption)->needs(memberOption);
     argv = commandLine.ensure_utf8(argv);
     try {
         commandLine.parse(argc, argv);
@@ -213,6 +199,8 @@ int main(int argc, char* argv[])
                               "loaded path=" + configPath.string());
 
     const auto gameFiles = findGameFiles(configResult.config->extractedBinariesPath);
+    std::vector<std::filesystem::path> textureArchives;
+    for (const auto& gameFile : gameFiles) if (gameFile.extension == ".pck") textureArchives.push_back(gameFile.path);
     SDL_Log("Configuration: %s", configPath.string().c_str());
     SDL_Log("Found %zu files under %s; viewing is supported for .VKI, .RGBA/.RGB, .PSS, .PCK, and .MPK.", gameFiles.size(),
             configResult.config->extractedBinariesPath.string().c_str());
@@ -374,18 +362,10 @@ int main(int argc, char* argv[])
             if (entry.type == "vkModel" || lowercase(std::filesystem::path(entry.name).extension().string()) == ".vk") {
                 spyhunter::runtime::VkModelLoadOptions options;
                 std::string error;
-                std::optional<std::pair<std::filesystem::path, std::string>> tireAtlas;
-                // spy_wheel.vk serializes a vkDMATexture dependency named
-                // new_car_all.rgb. The retail PCK load-name index resolves it to
-                // vehicles/interceptor/new_car_all.rgb. ShMenu5::buildInterceptor
-                // also loads interceptor_all.rgb for the complete vehicle setup.
-                if (lowercase(std::filesystem::path(entry.name).filename().string()) == "spy_wheel.vk")
-                    tireAtlas = findPackedTexture(gameFiles, "new_car_all.rgb");
-                const std::filesystem::path textureArchive = tireAtlas ? tireAtlas->first : std::filesystem::path{};
-                const std::string textureMember = tireAtlas ? tireAtlas->second : std::string{};
-                if (modelViewer.openVkModel(file.path, entry, options, renderer, textureArchive, textureMember, error)) {
+                if (modelViewer.openVkModel(file.path, entry, options, renderer, textureArchives, error)) {
+                    modelViewer.setRawAttributeColor(rawAttributeColors);
                     const auto* model = modelViewer.modelForDiagnostics();
-                    status = "3D model preview: " + entry.name + " (vehicle atlas applied when available; material state diagnostic).";
+                    status = "3D model preview: " + entry.name + " (serialized texture paths resolved when available).";
                     spyhunter::logging::write("SHViewer", spyhunter::logging::Level::debug,
                         "decoded vkModel member=" + entry.name + " version=" +
                         std::to_string((entry.serializationVersion >> 24) & 0xff) + "." +

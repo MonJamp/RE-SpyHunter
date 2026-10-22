@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -154,6 +155,37 @@ std::string versionText(const std::uint32_t version)
     return std::to_string((version >> 24) & 0xff) + "." + std::to_string((version >> 16) & 0xff) + "." +
            std::to_string(version & 0xffff);
 }
+
+std::string lowercase(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+void findTextureReferences(const std::vector<std::uint8_t>& bytes, std::vector<std::string>& output)
+{
+    constexpr std::size_t maximumReferences = 16;
+    constexpr std::size_t maximumStringBytes = 1024;
+    std::vector<std::string> seen;
+    for (std::size_t at = 0; at < bytes.size() && output.size() < maximumReferences;) {
+        const auto start = at;
+        while (at < bytes.size() && bytes[at] >= 0x20 && bytes[at] <= 0x7e && at - start < maximumStringBytes) ++at;
+        const auto length = at - start;
+        if (length >= 5) {
+            std::string candidate(reinterpret_cast<const char*>(bytes.data() + start), length);
+            const auto lowered = lowercase(candidate);
+            const bool supported = lowered.ends_with(".rgb") || lowered.ends_with(".rgba");
+            if (supported && (candidate.find('/') != std::string::npos || candidate.find('\\') != std::string::npos) &&
+                std::find(seen.begin(), seen.end(), lowered) == seen.end()) {
+                seen.push_back(lowered);
+                output.push_back(std::move(candidate));
+            }
+        }
+        if (at == start) ++at;
+    }
+}
 }
 
 bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntry& entry,
@@ -198,6 +230,11 @@ bool loadVkModelGeometry(const std::filesystem::path& archivePath, const PckEntr
             return false;
         }
     }
+
+    findTextureReferences(bytes, result.textureReferences);
+    for (const auto& reference : result.textureReferences)
+        SDL_Log("GameRuntime vkModel texture candidate: member=%s resource=%s (bounded printable-string heuristic)",
+                entry.name.c_str(), reference.c_str());
 
     const auto records = findStripRecords(bytes, options.maxDrawables, stop);
     if (stop.stop_requested()) { error = "Model loading cancelled."; return false; }
