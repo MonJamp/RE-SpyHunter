@@ -1,5 +1,6 @@
 #include "ModelViewerControl.h"
 #include "../../GameRuntime/MeshTopology.h"
+#include "../../GameRuntime/PackedTexture.h"
 
 #include "../../GUI/Gui.h"
 
@@ -11,6 +12,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <limits>
 
 namespace spyhunter::tools
 {
@@ -18,6 +20,87 @@ namespace
 {
 struct ProjectedVertex { SDL_FPoint point{}; SDL_FPoint uv{}; float depth = 0.0f; SDL_Color color{}; };
 struct Triangle { std::array<ProjectedVertex, 3> vertices{}; float depth = 0.0f; };
+
+struct DepthVertex { float x = 0, y = 0, z = 0, u = 0, v = 0; };
+struct DepthRasterStats { std::uint64_t coveredSamples = 0, depthRejectedSamples = 0, depthPassedPixels = 0, visibleTriangles = 0; };
+
+float edgeFunction(const DepthVertex& a, const DepthVertex& b, const float x, const float y)
+{
+    return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+}
+
+template<typename Mesh>
+void rasterizeModel(const Mesh& mesh, const SDL_FRect& viewport, const float yaw, const float elevation,
+                    const float zoom, const bool textured, const bool repeatUv, const bool flipV,
+                    const runtime::DecodedStill& texture, std::vector<std::uint8_t>& rgba,
+                    std::vector<float>& depth, DepthRasterStats& stats)
+{
+    const int width = static_cast<int>(viewport.w), height = static_cast<int>(viewport.h);
+    if (width <= 0 || height <= 0 || mesh.vertices.empty() ||
+        rgba.size() != static_cast<std::size_t>(width) * height * 4 ||
+        depth.size() != static_cast<std::size_t>(width) * height) return;
+    std::array<float, 3> minimum = mesh.vertices.front().position, maximum = minimum;
+    for (const auto& vertex : mesh.vertices) for (std::size_t axis = 0; axis < 3; ++axis) {
+        minimum[axis] = (std::min)(minimum[axis], vertex.position[axis]);
+        maximum[axis] = (std::max)(maximum[axis], vertex.position[axis]);
+    }
+    std::array<float, 3> center{};
+    for (std::size_t axis = 0; axis < 3; ++axis) center[axis] = (minimum[axis] + maximum[axis]) * 0.5f;
+    const float extent = (std::max)({maximum[0]-minimum[0], maximum[1]-minimum[1], maximum[2]-minimum[2], 0.001f});
+    const float scale = (std::min)(viewport.w, viewport.h) * 0.68f / extent * zoom;
+    const float azimuth = yaw + 0.78539816f, ac = std::cos(azimuth), as = std::sin(azimuth);
+    const float ec = std::cos(elevation), es = std::sin(elevation);
+    std::vector<DepthVertex> projected(mesh.vertices.size());
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const auto& source = mesh.vertices[i];
+        const float x = source.position[0]-center[0], y = source.position[1]-center[1], z = source.position[2]-center[2];
+        const float right = x*ac-y*as, front = x*as+y*ac;
+        projected[i] = {viewport.w*.5f + right*scale, viewport.h*.52f + (front*ec-z*es)*scale,
+                        front*es+z*ec, source.uv[0], flipV ? 1.0f-source.uv[1] : source.uv[1]};
+    }
+    if (!runtime::validateStripLayout(mesh.stripLengths, mesh.vertices.size())) return;
+    runtime::forEachStripTriangle(mesh.stripLengths, [&](std::size_t, const auto& indices) {
+        const auto& a=projected[indices[0]]; const auto& b=projected[indices[1]]; const auto& c=projected[indices[2]];
+        const float area = edgeFunction(a,b,c.x,c.y);
+        if (!std::isfinite(area) || std::abs(area) < 1.0e-6f) return;
+        const int x0=(std::max)(0,static_cast<int>(std::floor((std::min)({a.x,b.x,c.x}))));
+        const int x1=(std::min)(width-1,static_cast<int>(std::ceil((std::max)({a.x,b.x,c.x}))));
+        const int y0=(std::max)(0,static_cast<int>(std::floor((std::min)({a.y,b.y,c.y}))));
+        const int y1=(std::min)(height-1,static_cast<int>(std::ceil((std::max)({a.y,b.y,c.y}))));
+        if (x0>x1 || y0>y1) return;
+        bool triangleVisible = false;
+        for (int py=y0; py<=y1; ++py) for (int px=x0; px<=x1; ++px) {
+            const float x=px+.5f, y=py+.5f;
+            const float wa=edgeFunction(b,c,x,y)/area, wb=edgeFunction(c,a,x,y)/area, wc=1.0f-wa-wb;
+            if (wa < -1e-5f || wb < -1e-5f || wc < -1e-5f) continue;
+            ++stats.coveredSamples;
+            const float z=wa*a.z+wb*b.z+wc*c.z;
+            const auto pixel=static_cast<std::size_t>(py)*width+px;
+            if (z <= depth[pixel]) { ++stats.depthRejectedSamples; continue; } // Camera is on the positive-depth side.
+            std::array<std::uint8_t,4> color{172,185,198,255};
+            if (textured && mesh.vertices[indices[0]].uv.size() == 2 && texture.width>0 && texture.height>0 &&
+                texture.rgba.size() == static_cast<std::size_t>(texture.width)*texture.height*4) {
+                float u=wa*a.u+wb*b.u+wc*c.u, v=wa*a.v+wb*b.v+wc*c.v;
+                if (repeatUv) { u-=std::floor(u); v-=std::floor(v); }
+                else { u=std::clamp(u,0.0f,1.0f); v=std::clamp(v,0.0f,1.0f); }
+                const int tx=(std::min)(texture.width-1,static_cast<int>(u*texture.width));
+                const int ty=(std::min)(texture.height-1,static_cast<int>(v*texture.height));
+                const auto ti=(static_cast<std::size_t>(ty)*texture.width+tx)*4;
+                std::copy_n(texture.rgba.data()+ti,4,color.data());
+            }
+            if (color[3]==0) continue;
+            depth[pixel]=z;
+            triangleVisible = true;
+            ++stats.depthPassedPixels;
+            const auto oi=pixel*4;
+            const float alpha=color[3]/255.0f;
+            for (std::size_t channel=0; channel<3; ++channel)
+                rgba[oi+channel]=static_cast<std::uint8_t>(color[channel]*alpha+rgba[oi+channel]*(1-alpha)+.5f);
+            rgba[oi+3]=255;
+        }
+        if (triangleVisible) ++stats.visibleTriangles;
+    });
+}
 
 float detailsPanelWidth(const float viewportWidth, const bool diagnostics)
 {
@@ -72,7 +155,7 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
                  const bool wireframe, const bool vertexColors, const bool showBounds,
                  const bool showVertices, const float yaw, const float elevation, const float zoom,
                  SDL_Texture* texture = nullptr, const bool repeatUv = false, const bool flipV = false,
-                 const bool sortByCameraDepth = false)
+                 const bool sortByCameraDepth = false, const bool drawSurface = true)
 {
     if (mesh.vertices.empty() || viewport.w <= 0 || viewport.h <= 0) return;
     std::array<float, 3> minimum = mesh.vertices.front().position;
@@ -113,7 +196,7 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
     });
     std::stable_sort(triangles.begin(), triangles.end(), [](const Triangle& a, const Triangle& b) { return a.depth < b.depth; });
 
-    if (!wireframe) {
+    if (!wireframe && drawSurface) {
         std::vector<SDL_Vertex> vertices;
         std::vector<int> indices;
         vertices.reserve(triangles.size() * 3);
@@ -130,7 +213,7 @@ void renderTrack(SDL_Renderer* renderer, const Mesh& mesh, const SDL_FRect& view
         }
         SDL_RenderGeometry(renderer, texture, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
     }
-    if (wireframe) {
+    if (wireframe && drawSurface) {
         SDL_SetRenderDrawColor(renderer, 40, 44, 50, 255);
         for (const auto& triangle : triangles) for (std::size_t edge = 0; edge < 3; ++edge) {
             const auto& from = triangle.vertices[edge].point;
@@ -253,7 +336,11 @@ void ModelViewerControl::clear()
     active_ = false;
     mesh_.reset();
     model_.reset();
-    modelTexture_.unload();
+    modelTexturePixels_ = {};
+    if (depthPreviewTexture_) SDL_DestroyTexture(depthPreviewTexture_);
+    depthPreviewTexture_ = nullptr;
+    depthPreviewWidth_ = depthPreviewHeight_ = 0;
+    depthPreviewPixels_.clear(); depthBuffer_.clear();
     textureDescription_.clear();
     selectedDrawable_ = 0;
     status_.clear();
@@ -292,13 +379,15 @@ bool ModelViewerControl::openVkModel(const std::filesystem::path& archivePath, c
     model_ = std::move(model);
     if (!textureArchivePath.empty() && !textureMember.empty() && renderer) {
         std::string textureError;
-        if (modelTexture_.load(textureArchivePath, textureMember, renderer, textureError))
+        auto pixels = runtime::loadPackedTexturePixels(textureArchivePath, textureMember, textureError);
+        if (pixels) {
+            modelTexturePixels_ = std::move(*pixels);
             textureDescription_ = std::string(textureMember) + " from " + textureArchivePath.filename().string();
-        else textureDescription_ = "Texture unresolved: " + textureError;
+        } else textureDescription_ = "Texture unresolved: " + textureError;
     } else textureDescription_ = "No evidence-backed texture binding supplied.";
     SDL_Log("SHViewer vkModel texture: model=%s source=%s dimensions=%dx%d status=%s",
-        entry.name.c_str(), textureDescription_.c_str(), modelTexture_.width(), modelTexture_.height(),
-        modelTexture_.nativeTexture() ? "loaded" : "unavailable");
+        entry.name.c_str(), textureDescription_.c_str(), modelTexturePixels_.width, modelTexturePixels_.height,
+        modelTexturePixels_.rgba.empty() ? "unavailable" : "loaded for depth rasterizer");
     active_ = true;
     status_ = "Raw geometry with evidence-backed vehicle atlas; hierarchy and material state remain unresolved.";
     return true;
@@ -378,6 +467,7 @@ bool ModelViewerControl::writeVkModelDebugJson(const std::filesystem::path& outp
     output << std::setprecision(9)
         << "{\n  \"format\": \"SHViewer vkModel geometry debug v1\",\n"
         << "  \"interpretation\": \"observed vkPS2TriStrips versioned streams; raw local drawable geometry\",\n"
+        << "  \"viewer_depth_method\": \"per-pixel orthographic camera-space depth buffer; largest positive camera depth wins\",\n"
         << "  \"archive\": " << jsonString(model_->archivePath) << ",\n"
         << "  \"member\": " << jsonString(model_->memberName) << ",\n"
         << "  \"member_offset\": " << model_->memberOffset << ",\n"
@@ -542,11 +632,12 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
     spyhunter::gui::text(renderer, viewport.x + 16, viewport.y + 12, "3D RESOURCE INSPECTOR | HOST DIAGNOSTIC VIEW");
     const SDL_FRect scene = sceneRect(viewport, diagnostics_);
     const SDL_FRect details = detailsRect(viewport, diagnostics_);
-    const SDL_Color sceneBackground = model_ && modelTexture_.nativeTexture()
+    const SDL_Color sceneBackground = model_ && !modelTexturePixels_.rgba.empty()
         ? SDL_Color{47, 53, 61, 255} : SDL_Color{232, 235, 238, 255};
     spyhunter::gui::panel(renderer, scene, sceneBackground);
     spyhunter::gui::panel(renderer, details, {27, 34, 44, 255});
     SDL_SetRenderDrawColor(renderer, 229, 236, 246, 255);
+    DepthRasterStats depthStats{};
     if (mesh_ || (model_ && !model_->drawables.empty())) {
         float y = scene.y + 16;
         const float textX = details.x + 14.0f;
@@ -584,10 +675,33 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             const auto& drawable = model_->drawables[selectedDrawable_];
             const SDL_Rect sceneClip = sceneClipRect(scene);
             SDL_SetRenderClipRect(renderer, &sceneClip);
-            const bool useTexture = textured_ && drawable.hasUv && modelTexture_.nativeTexture();
+            const bool useTexture = textured_ && drawable.hasUv && !modelTexturePixels_.rgba.empty();
             renderTrack(renderer, drawable, scene, wireframe_, false,
-                        bounds_, vertexPoints_, yaw_, elevation_, zoom_, useTexture ? modelTexture_.nativeTexture() : nullptr,
-                        repeatUv_, flipTextureV_, true);
+                        bounds_, vertexPoints_, yaw_, elevation_, zoom_, nullptr,
+                        repeatUv_, flipTextureV_, true, wireframe_);
+            if (!wireframe_) {
+                const int imageWidth = (std::max)(1, static_cast<int>(std::ceil(scene.w)));
+                const int imageHeight = (std::max)(1, static_cast<int>(std::ceil(scene.h)));
+                const std::size_t pixelCount = static_cast<std::size_t>(imageWidth) * imageHeight;
+                // Keep diagnostic CPU buffers bounded even on unusually large windows.
+                if (pixelCount <= 1'200'000) {
+                    depthPreviewPixels_.resize(pixelCount * 4);
+                    depthBuffer_.assign(pixelCount, -std::numeric_limits<float>::infinity());
+                    for (std::size_t i = 0; i < pixelCount; ++i) {
+                        depthPreviewPixels_[i*4+0] = sceneBackground.r; depthPreviewPixels_[i*4+1] = sceneBackground.g;
+                        depthPreviewPixels_[i*4+2] = sceneBackground.b; depthPreviewPixels_[i*4+3] = 255;
+                    }
+                    rasterizeModel(drawable, scene, yaw_, elevation_, zoom_, useTexture, repeatUv_, flipTextureV_, modelTexturePixels_, depthPreviewPixels_, depthBuffer_, depthStats);
+                    if (!depthPreviewTexture_ || depthPreviewWidth_ != imageWidth || depthPreviewHeight_ != imageHeight) {
+                        if (depthPreviewTexture_) SDL_DestroyTexture(depthPreviewTexture_);
+                        depthPreviewTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, imageWidth, imageHeight);
+                        depthPreviewWidth_ = depthPreviewTexture_ ? imageWidth : 0;
+                        depthPreviewHeight_ = depthPreviewTexture_ ? imageHeight : 0;
+                    }
+                    if (depthPreviewTexture_ && SDL_UpdateTexture(depthPreviewTexture_, nullptr, depthPreviewPixels_.data(), imageWidth * 4))
+                        SDL_RenderTexture(renderer, depthPreviewTexture_, nullptr, &scene);
+                }
+            }
             SDL_SetRenderClipRect(renderer, nullptr);
             line("Type: vkModel v" + std::to_string((model_->modelVersion >> 24) & 0xff) + "." +
                  std::to_string((model_->modelVersion >> 16) & 0xff) + "." + std::to_string(model_->modelVersion & 0xffff));
@@ -608,6 +722,7 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             line("Host filter: linear; game sampler state unknown");
             line(std::string("UV wrap override: ") + (repeatUv_ ? "repeat" : "clamp") + " (R toggles)");
             line(std::string("Texture V override: ") + (flipTextureV_ ? "flipped" : "source") + " (U toggles)");
+            line("Depth: per-pixel, nearest surface wins");
             line("PS2 blend / cull / lighting state unresolved");
             line("Texture alpha: diagnostic viewer background behind texels");
             line("Attribute flag meanings unresolved");
@@ -627,6 +742,12 @@ void ModelViewerControl::render(SDL_Renderer* renderer, const SDL_FRect& viewpor
             const auto pair = [](const float minimum, const float maximum) {
                 return std::to_string(minimum) + " .. " + std::to_string(maximum);
             };
+            if (model_ && !wireframe_) {
+                line("Depth stats: " + std::to_string(depthStats.depthPassedPixels) + " pixels / " +
+                     std::to_string(depthStats.visibleTriangles) + " visible triangles");
+                line("Depth rejects / covered: " + std::to_string(depthStats.depthRejectedSamples) + " / " +
+                     std::to_string(depthStats.coveredSamples));
+            }
             line("X: " + pair(stats.minimum[0], stats.maximum[0]));
             line("Y: " + pair(stats.minimum[1], stats.maximum[1]));
             line("Z: " + pair(stats.minimum[2], stats.maximum[2]));

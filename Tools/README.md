@@ -24,6 +24,8 @@ For repeatable track analysis, `--leaf <index>` and `--batch <index>` select ano
 
 For repeatable model analysis, `--open <archive.pck> --member <model.vk>` selects a PCK member. `--dump-vk-json <path>` exports decoded drawable/object IDs, member-relative offsets, vertex positions, UVs, raw attribute bytes, strip lengths, and parser uncertainty. This reader is currently limited to a bounded v3 model path with fixture validation; raw attribute meanings and hierarchy transforms remain unresolved. Debug logging records per-drawable offsets, counts, versions and flags.
 
+Model drawables use a bounded CPU per-pixel depth buffer in the orthographic host preview, so back-side faces no longer leak over nearer surfaces as they did with whole-triangle painter sorting. This does not apply to the separately identified track preview and does not claim recovered PS2 depth/material behavior. Press F3 for depth coverage, rejection and visible-triangle counts. A before/after tire capture and known limitations are recorded in `analysis/model-vk/format-investigation.md`.
+
 ```powershell
 .\x64\Debug\SHViewer.exe --open DATA/MENU.PCK --member menu_main_stencil.rgba
 .\x64\Debug\SHViewer.exe --open DATA/MENU.PCK --member menu_main_stencil.rgba --alpha --export-image stencil-alpha.bmp

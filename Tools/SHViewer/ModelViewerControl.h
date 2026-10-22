@@ -1,16 +1,18 @@
 #pragma once
 
 #include "../../GameRuntime/PckArchive.h"
-#include "../../GameRuntime/PackedTexture.h"
 #include "../../GameRuntime/TrackGeometry.h"
 #include "../../GameRuntime/VkModelGeometry.h"
+#include "../../GameRuntime/VkiImage.h"
 
 #include <SDL3/SDL.h>
 
 #include <filesystem>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace spyhunter::tools
 {
@@ -42,7 +44,12 @@ private:
     bool active_ = false;
     std::optional<runtime::TrackMesh> mesh_;
     std::optional<runtime::VkModelGeometry> model_;
-    runtime::PackedTexture modelTexture_;
+    runtime::DecodedStill modelTexturePixels_;
+    mutable SDL_Texture* depthPreviewTexture_ = nullptr;
+    mutable int depthPreviewWidth_ = 0;
+    mutable int depthPreviewHeight_ = 0;
+    mutable std::vector<std::uint8_t> depthPreviewPixels_;
+    mutable std::vector<float> depthBuffer_;
     std::string textureDescription_;
     std::size_t selectedDrawable_ = 0;
     std::string status_;
